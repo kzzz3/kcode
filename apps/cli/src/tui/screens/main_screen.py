@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-
-
 from pathlib import Path
-
-
 
 from textual.app import ComposeResult
 
@@ -16,15 +12,11 @@ from textual.screen import Screen
 
 from textual.widgets import Header, Footer
 
-
-
 from packages.core.src.models.interfaces import StreamChunk, ChunkType
 
 from packages.core.src.runtime.contracts import AgentSnapshot
 
 from apps.cli.src.core.agent_runtime import CliAgentRuntime
-
-
 
 from ..widgets.chat_area import ChatArea
 
@@ -40,21 +32,13 @@ from ..utils.custom_commands import load_user_commands, load_project_commands
 
 from ..widgets.slash_overlay import SlashCommand
 
-
-
 from .model_picker import ModelPicker
 
 from .help_screen import HelpScreen
 
-
-
-
-
 class MainScreen(Screen):
 
   """Primary screen: chat + input + sidebar + inline slash overlay + status bar."""
-
-
 
   CSS = """
 
@@ -66,8 +50,6 @@ class MainScreen(Screen):
 
   }
 
-
-
   #chat-container {
 
     width: 1fr;
@@ -76,15 +58,11 @@ class MainScreen(Screen):
 
   }
 
-
-
   #input-wrapper {
 
     height: auto;
 
   }
-
-
 
   #sidebar {
 
@@ -98,8 +76,6 @@ class MainScreen(Screen):
 
   """
 
-
-
   BINDINGS = [
 
     ("ctrl+n", "new_session", "New Session"),
@@ -110,12 +86,9 @@ class MainScreen(Screen):
 
     ("ctrl+h", "help", "Help"),
 
-
     ("ctrl+q", "Quit"),
 
   ]
-
-
 
   def __init__(self, runtime: CliAgentRuntime) -> None:
 
@@ -124,8 +97,6 @@ class MainScreen(Screen):
     self._runtime = runtime
 
     self._is_streaming = False
-
-
 
   def compose(self) -> ComposeResult:
 
@@ -150,8 +121,6 @@ class MainScreen(Screen):
     yield StatusBar()
 
     yield Footer()
-
-
 
   def on_mount(self) -> None:
 
@@ -181,11 +150,7 @@ class MainScreen(Screen):
 
     chat.show_welcome()
 
-
-
   # ─── Slash overlay integration ─────────────────────────────────────
-
-
 
   def on_input_area_open_slash_overlay(self, event: InputArea.OpenSlashOverlay) -> None:
 
@@ -199,8 +164,6 @@ class MainScreen(Screen):
 
     input_area.activate_slash_overlay()
 
-
-
   def on_input_area_update_slash_filter(self, event: InputArea.UpdateSlashFilter) -> None:
 
     """User typed more after '/' -- update overlay filter."""
@@ -210,8 +173,6 @@ class MainScreen(Screen):
     if overlay.visible:
 
       overlay.update_filter(event.query)
-
-
 
   def on_input_area_navigate_slash(self, event: InputArea.NavigateSlash) -> None:
 
@@ -226,8 +187,6 @@ class MainScreen(Screen):
     else:
 
       overlay.move_down()
-
-
 
   def on_input_area_confirm_slash(self, event: InputArea.ConfirmSlash) -> None:
 
@@ -248,10 +207,6 @@ class MainScreen(Screen):
     if cmd_id:
 
       self._dispatch_command(cmd_id, content)
-
-
-
-
 
   def _load_custom_commands(self) -> None:
 
@@ -319,8 +274,6 @@ class MainScreen(Screen):
 
     self._run_command(cmd_id, content=content)
 
-
-
   def _show_argument_dialog(
 
     self, cmd_id: str, content: str, arg_names: list[str]
@@ -353,8 +306,6 @@ class MainScreen(Screen):
 
     new_dialog.focus()
 
-
-
   def on_argument_dialog_args_submitted(
 
     self, event: SlashOverlay.ArgumentDialog.ArgsSubmitted
@@ -383,8 +334,6 @@ class MainScreen(Screen):
 
       self._run_command(event.command_id, content=resolved)
 
-
-
   def on_argument_dialog_cancelled(
 
     self, event: SlashOverlay.ArgumentDialog.Cancelled
@@ -405,8 +354,6 @@ class MainScreen(Screen):
 
     self.notify("Command cancelled.", severity="information")
 
-
-
   def on_input_area_dismiss_slash(self, event: InputArea.DismissSlash) -> None:
 
     """Escape while overlay is open -- dismiss it."""
@@ -418,8 +365,6 @@ class MainScreen(Screen):
     input_area = self.query_one(InputArea)
 
     input_area.deactivate_slash_overlay()
-
-
 
   def on_slash_overlay_command_selected(self, event: SlashOverlay.CommandSelected) -> None:
 
@@ -437,17 +382,11 @@ class MainScreen(Screen):
 
     self._dispatch_command(event.command_id, event.content)
 
-
-
   # ─── Text submission ────────────────────────────────────────────────
-
-
 
   def on_input_area_submitted(self, event: InputArea.Submitted) -> None:
 
     """Handle user message submission.
-
-
 
     Guard: if the slash overlay is active we must not treat the keystroke as
 
@@ -469,15 +408,11 @@ class MainScreen(Screen):
 
       return
 
-
-
     chat = self.query_one(ChatArea)
 
     chat.add_message(event.value, "user")
 
     self.run_worker(self._stream_worker(event.value), exclusive=True)
-
-
 
   def on_input_area_cancel_requested(self, event: InputArea.CancelRequested) -> None:
 
@@ -497,11 +432,7 @@ class MainScreen(Screen):
 
       self.notify("Streaming cancelled")
 
-
-
   # ─── Streaming agent loop ──────────────────────────────────────────
-
-
 
   async def _stream_worker(self, user_input: str) -> None:
 
@@ -516,8 +447,6 @@ class MainScreen(Screen):
     chat = self.query_one(ChatArea)
 
     chat.start_stream("assistant")
-
-
 
     try:
 
@@ -603,11 +532,7 @@ class MainScreen(Screen):
 
       self._is_streaming = False
 
-
-
   # ─── Session management ────────────────────────────────────────────
-
-
 
   def _refresh_sessions(self) -> None:
 
@@ -631,8 +556,6 @@ class MainScreen(Screen):
 
       pass
 
-
-
   def on_session_panel_new_session(self, event: SessionPanel.NewSession) -> None:
 
     """Start a new session."""
@@ -646,8 +569,6 @@ class MainScreen(Screen):
     self.notify("New session started")
 
     self._refresh_sessions()
-
-
 
   def on_session_panel_session_selected(self, event: SessionPanel.SessionSelected) -> None:
 
@@ -689,13 +610,9 @@ class MainScreen(Screen):
 
         ))
 
-
-
       self._runtime._session = session
 
       self._runtime._replay_messages(initial)
-
-
 
       chat = self.query_one(ChatArea)
 
@@ -711,15 +628,11 @@ class MainScreen(Screen):
 
           chat.add_message(mr.content, "assistant")
 
-
-
       self.notify(f"Loaded session {event.session_id[:8]}")
 
     except Exception as e:
 
       self.notify(f"Failed to load session: {e}", severity="error")
-
-
 
   def on_session_panel_refresh_sessions(self, event: SessionPanel.RefreshSessions) -> None:
 
@@ -727,11 +640,7 @@ class MainScreen(Screen):
 
     self._refresh_sessions()
 
-
-
   # ─── Slash command execution ────────────────────────────────────────
-
-
 
   def _run_command(self, cmd_id: str, *, content: str | None = None) -> None:
 
@@ -750,8 +659,6 @@ class MainScreen(Screen):
       self.notify(f"Custom command {cmd_id} has no content", severity="warning")
 
       return
-
-
 
     dispatch = {
 
@@ -793,8 +700,6 @@ class MainScreen(Screen):
 
       self.notify(f"Unknown command: {cmd_id}", severity="warning")
 
-
-
   def _run_custom_command(self, content: str) -> None:
 
     """Send custom command content as a user message to the agent."""
@@ -810,8 +715,6 @@ class MainScreen(Screen):
     chat.add_message(content, "user")
 
     self.run_worker(self._stream_worker(content), exclusive=True)
-
-
 
   def _run_init(self) -> None:
 
@@ -831,8 +734,6 @@ class MainScreen(Screen):
 
       self.notify(f"Init failed: {e}", severity="error")
 
-
-
   def _toggle_sidebar(self) -> None:
 
     """Toggle sidebar visibility."""
@@ -840,8 +741,6 @@ class MainScreen(Screen):
     sidebar = self.query_one("#sidebar")
 
     sidebar.display = not sidebar.display
-
-
 
   def action_clear_chat(self) -> None:
 
@@ -852,8 +751,6 @@ class MainScreen(Screen):
     chat.clear()
 
     self.notify("Chat cleared")
-
-
 
   def _open_model_picker(self) -> None:
 
@@ -879,8 +776,6 @@ class MainScreen(Screen):
 
     self.run_worker(_run())
 
-
-
   def _list_available_models(self) -> list[str]:
 
     """Return list of available model names."""
@@ -905,8 +800,6 @@ class MainScreen(Screen):
 
     return [current] if current else ["gpt-4o"]
 
-
-
   def _toggle_approval(self) -> None:
 
     """Toggle between ask and auto approval mode."""
@@ -926,8 +819,6 @@ class MainScreen(Screen):
     status.update_status(approval_mode=new_mode)
 
     self.notify(f"Approval mode: {new_mode}")
-
-
 
   def _cycle_theme(self) -> None:
 
@@ -959,15 +850,11 @@ class MainScreen(Screen):
 
     self.notify(f"Theme: {next_theme}")
 
-
-
   def _show_help(self) -> None:
 
     """Show the help screen."""
 
     self.app.push_screen(HelpScreen())
-
-
 
   def _compact_context(self) -> None:
 
@@ -989,8 +876,6 @@ class MainScreen(Screen):
 
       self.notify(f"Compact failed: {e}", severity="error")
 
-
-
   def _list_sessions(self) -> None:
 
     """Show sessions info in the sidebar."""
@@ -1004,8 +889,6 @@ class MainScreen(Screen):
     self._refresh_sessions()
 
     self.notify("Sessions refreshed")
-
-
 
   def _run_doctor(self) -> None:
 
@@ -1039,35 +922,23 @@ class MainScreen(Screen):
 
       chat.add_message(f"Doctor check failed: {e}", "assistant")
 
-
-
   # ─── Actions ────────────────────────────────────────────────────────
-
-
 
   def action_new_session(self) -> None:
 
     self.on_session_panel_new_session(SessionPanel.NewSession())
 
-
-
   def action_toggle_sidebar(self) -> None:
 
     self._toggle_sidebar()
-
-
 
   def action_help(self) -> None:
 
     self._show_help()
 
-
-
   def action_command_palette(self) -> None:
 
     """Ctrl+K -- open the slash overlay as a command palette.
-
-
 
     Note: Ctrl+K is now handled directly by InputArea which sets
 
@@ -1089,8 +960,6 @@ class MainScreen(Screen):
 
     input_area.activate_slash_overlay()
 
-
-
   def action_compact(self) -> None:
 
     """Compact the conversation context."""
@@ -1102,8 +971,6 @@ class MainScreen(Screen):
     else:
 
       self.notify("Nothing to compact")
-
-
 
   def action_quit(self) -> None:
 

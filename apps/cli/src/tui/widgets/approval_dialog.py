@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-
-
 from textual.app import ComposeResult
 
 from textual.containers import Vertical, Horizontal
@@ -13,10 +11,6 @@ from textual.widgets import Button, Static, Label
 from textual.screen import ModalScreen
 
 from rich.syntax import Syntax
-
-
-
-
 
 # Safety-class -> (border_color, label_color)
 
@@ -30,15 +24,9 @@ _SAFETY_STYLES: dict[str, tuple[str, str]] = {
 
 }
 
-
-
-
-
 class ApprovalDialog(ModalScreen[bool]):
 
   """Modal that asks the user to approve or reject a tool call."""
-
-
 
   DEFAULT_CSS = """
 
@@ -49,8 +37,6 @@ class ApprovalDialog(ModalScreen[bool]):
     background: $boost 60%;
 
   }
-
-
 
   #dialog {
 
@@ -70,8 +56,6 @@ class ApprovalDialog(ModalScreen[bool]):
 
   }
 
-
-
   #tool-name {
 
     height: auto;
@@ -79,8 +63,6 @@ class ApprovalDialog(ModalScreen[bool]):
     margin: 0 0 1 0;
 
   }
-
-
 
   #tool-info {
 
@@ -96,8 +78,6 @@ class ApprovalDialog(ModalScreen[bool]):
 
   }
 
-
-
   #buttons {
 
     width: 100%;
@@ -110,8 +90,6 @@ class ApprovalDialog(ModalScreen[bool]):
 
   }
 
-
-
   Button {
 
     margin: 0 1;
@@ -121,8 +99,6 @@ class ApprovalDialog(ModalScreen[bool]):
   }
 
   """
-
-
 
   def __init__(self, tool_name: str, tool_args: dict, safety_class: str = "unknown") -> None:
 
@@ -134,8 +110,6 @@ class ApprovalDialog(ModalScreen[bool]):
 
     self.safety_class = safety_class
 
-
-
   def compose(self) -> ComposeResult:
 
     import json
@@ -145,8 +119,6 @@ class ApprovalDialog(ModalScreen[bool]):
       self.safety_class, ("$warning", "white"),
 
     )
-
-
 
     # Format args as highlighted JSON
 
@@ -158,11 +130,7 @@ class ApprovalDialog(ModalScreen[bool]):
 
     syntax = Syntax(args_json, "json", theme="monokai", word_wrap=True)
 
-
-
     safety_label = self.safety_class.upper()
-
-
 
     with Vertical(id="dialog", styles={"border": ("thick", border_color)}):
 
@@ -186,8 +154,6 @@ class ApprovalDialog(ModalScreen[bool]):
 
         yield Button("Reject  n", variant="error", id="btn-reject")
 
-
-
   def on_key(self, event) -> None:
 
     """y approves, n rejects."""
@@ -199,8 +165,6 @@ class ApprovalDialog(ModalScreen[bool]):
     elif event.key == "n":
 
       self.dismiss(False)
-
-
 
   def on_button_pressed(self, event: Button.Pressed) -> None:
 

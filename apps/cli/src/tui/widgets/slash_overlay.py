@@ -24,7 +24,6 @@ from textual.widget import Widget
 from textual.message import Message
 from textual.widgets import Static, Input
 
-
 @dataclass(frozen=True)
 class SlashCommand:
   """A single slash-command entry with rich metadata."""
@@ -38,7 +37,6 @@ class SlashCommand:
   is_custom: bool = False
   content: str | None = None  # For custom commands, the template content
   argument_names: list[str] | None = None  # For custom commands with $ARGUMENT placeholders
-
 
 # -- Built-in command catalogue -----------------------------------------------
 
@@ -75,7 +73,6 @@ CATEGORY_META: list[tuple[str, str, str]] = [
   ("app",     "App",      "🚪"),  # door
 ]
 
-
 # -- Filtering -----------------------------------------------------------------
 
 def filter_slash_commands(
@@ -102,7 +99,6 @@ def filter_slash_commands(
       results.append(c)
   return results
 
-
 def group_by_category(
   commands: list[SlashCommand],
 ) -> list[tuple[str, str, list[SlashCommand]]]:
@@ -128,7 +124,6 @@ def group_by_category(
 
   return result
 
-
 class SlashOverlay(Widget):
   """Inline overlay that appears above the input area.
 
@@ -143,7 +138,7 @@ class SlashOverlay(Widget):
   SlashOverlay {
     display: none;
     height: auto;
-    max-height: 32;
+    max-height: 60%;
     overflow: hidden;
     background: $surface;
     border: tall $primary 40%;

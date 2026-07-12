@@ -59,9 +59,10 @@ class SessionPanel(Vertical):
 
   def compose(self):
     yield Static("Sessions", classes="panel-title")
+    yield Static("No sessions yet.", id="session-empty")
     yield ListView(id="session-list")
     with Vertical(id="session-buttons"):
-      yield Button("New Session", variant="primary", id="btn-new-session")
+      yield Button("+ New", variant="primary", id="btn-new-session")
       yield Button("Refresh", variant="default", id="btn-refresh")
 
   def set_sessions(self, sessions: list[tuple[str, str]]) -> None:
@@ -78,11 +79,24 @@ class SessionPanel(Vertical):
     """Rebuild the ListView from stored sessions."""
     list_view = self.query_one("#session-list", ListView)
     list_view.clear()
+    # Show/hide empty state
+    try:
+      empty = self.query_one("#session-empty")
+      empty.display = len(self._sessions) == 0
+      list_view.display = len(self._sessions) > 0
+    except Exception:
+      pass
     for sid, title in self._sessions:
-      # Show first 8 chars of ID + title
       short_id = sid[:8]
       label = f"{short_id} | {title}" if title else short_id
       list_view.append(ListItem(Label(label)))
+
+  def on_resize(self, event) -> None:
+    """Adapt layout for narrow screens."""
+    if event.size.width < 60:
+      self.add_class("narrow")
+    else:
+      self.remove_class("narrow")
 
   def on_list_view_selected(self, event: ListView.Selected) -> None:
     """Handle session selection."""
