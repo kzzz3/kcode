@@ -219,7 +219,15 @@ class MainScreen(Screen):
   # ─── Text submission ────────────────────────────────────────────────
 
   def on_input_area_submitted(self, event: InputArea.Submitted) -> None:
-    """Handle user message submission."""
+    """Handle user message submission.
+
+    Guard: if the slash overlay is active we must not treat the keystroke as
+    a chat submission. InputArea already confirms the overlay on Enter, but
+    the Submitted message can still bubble in edge cases; drop it here.
+    """
+    input_area = self.query_one(InputArea)
+    if input_area.is_slash_active:
+      return
     if self._is_streaming:
       self.notify("Agent is busy -- wait for it to finish.", severity="warning")
       return

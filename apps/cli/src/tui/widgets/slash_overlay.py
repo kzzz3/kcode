@@ -206,14 +206,16 @@ class SlashOverlay(Widget):
     text-style: bold;
   }
 
-  /* Shortcut badge on the right of row 1 */
+  /* Shortcut badge -- pill-like */
   .slash-shortcut {
     width: auto;
     min-width: 8;
     text-align: right;
-    color: $text-muted;
-    text-style: dim;
-    padding: 0 0 0 1;
+    color: $accent;
+    text-style: bold dim;
+    padding: 0 1;
+    background: $surface;
+    border: round $primary 40%;
   }
 
   /* Alias hint */
@@ -234,9 +236,10 @@ class SlashOverlay(Widget):
     text-style: dim;
   }
 
-  /* Selected state -- primary background highlight */
+  /* Selected state -- accent left bar + background highlight */
   .slash-item.selected {
-    background: $primary 25%;
+    background: $primary 20%;
+    border-left: tall $primary;
   }
   .slash-item.selected .slash-title {
     color: $text;
@@ -246,10 +249,21 @@ class SlashOverlay(Widget):
     color: $primary;
     text-style: bold;
   }
+  .slash-item.selected .slash-desc {
+    color: $text;
+  }
+  .slash-item.selected .slash-shortcut {
+    color: $accent;
+    background: $primary 30%;
+  }
 
   /* Hover effect */
   .slash-item:hover {
-    background: $primary 15%;
+    background: $primary 10%;
+    border-left: tall $primary 50%;
+  }
+  .slash-item:hover .slash-title {
+    text-style: bold;
   }
 
   /* No results placeholder */
@@ -258,7 +272,8 @@ class SlashOverlay(Widget):
     padding: 1 2;
     color: $text-muted;
     text-style: dim italic;
-    text-align: center;
+    text-align: center middle;
+    background: $surface;
   }
 
   /* Scroll hint at bottom when content overflows */

@@ -205,5 +205,10 @@ class InputArea(TextArea):
   # ── Internals ──────────────────────────────────────────────────────
 
   def _should_open_slash(self) -> bool:
-    """Return True if cursor is at the start and input is empty or whitespace."""
+    """Return True if input is empty or only whitespace.
+
+    We allow '/' to trigger the overlay whenever the input contains no
+    visible content. This is more robust than checking cursor position,
+    which can drift in edge cases with multi-line input.
+    """
     return not self.text.strip()
