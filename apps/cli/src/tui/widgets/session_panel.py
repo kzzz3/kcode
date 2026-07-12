@@ -1,0 +1,101 @@
+﻿"""Session management panel — list, create, select sessions."""
+from __future__ import annotations
+
+from textual.widgets import ListView, ListItem, Label, Button, Static
+from textual.containers import Vertical
+from textual.message import Message
+
+
+class SessionPanel(Vertical):
+  """Sidebar panel for session management."""
+
+  DEFAULT_CSS = """
+  SessionPanel {
+    width: 30;
+    min-width: 20;
+    border: solid $primary;
+    padding: 0 1;
+  }
+
+  #session-list {
+    height: 1fr;
+  }
+
+  #session-buttons {
+    height: auto;
+    dock: bottom;
+    padding: 1 0;
+  }
+
+  #session-buttons Button {
+    width: 100%;
+    margin: 0 0 1 0;
+  }
+
+  .panel-title {
+    height: 1;
+    padding: 0 0 0 0;
+    text-style: bold;
+  }
+  """
+
+  class SessionSelected(Message):
+    """Emitted when user selects a session."""
+    def __init__(self, session_id: str) -> None:
+      self.session_id = session_id
+      super().__init__()
+
+  class NewSession(Message):
+    """Emitted when user clicks New Session."""
+    pass
+
+  class RefreshSessions(Message):
+    """Emitted when user clicks Refresh."""
+    pass
+
+  def __init__(self) -> None:
+    super().__init__()
+    self._sessions: list[tuple[str, str]] = []  # (id, title)
+
+  def compose(self):
+    yield Static("Sessions", classes="panel-title")
+    yield ListView(id="session-list")
+    with Vertical(id="session-buttons"):
+      yield Button("New Session", variant="primary", id="btn-new-session")
+      yield Button("Refresh", variant="default", id="btn-refresh")
+
+  def set_sessions(self, sessions: list[tuple[str, str]]) -> None:
+    """Replace the session list with (id, title) pairs."""
+    self._sessions = sessions
+    self._rebuild_list()
+
+  def add_session(self, session_id: str, title: str) -> None:
+    """Add a session to the top of the list."""
+    self._sessions.insert(0, (session_id, title))
+    self._rebuild_list()
+
+  def _rebuild_list(self) -> None:
+    """Rebuild the ListView from stored sessions."""
+    list_view = self.query_one("#session-list", ListView)
+    list_view.clear()
+    for sid, title in self._sessions:
+      # Show first 8 chars of ID + title
+      short_id = sid[:8]
+      label = f"{short_id} | {title}" if title else short_id
+      list_view.append(ListItem(Label(label)))
+
+  def on_list_view_selected(self, event: ListView.Selected) -> None:
+    """Handle session selection."""
+    list_view = self.query_one("#session-list", ListView)
+    idx = list_view.index
+    if idx is not None and 0 <= idx < len(self._sessions):
+      session_id = self._sessions[idx][0]
+      self.post_message(self.SessionSelected(session_id))
+
+  def on_button_pressed(self, event: Button.Pressed) -> None:
+    """Handle button presses."""
+    if event.button.id == "btn-new-session":
+      self.post_message(self.NewSession())
+    elif event.button.id == "btn-refresh":
+      self.post_message(self.RefreshSessions())
+

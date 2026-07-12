@@ -33,3 +33,9 @@ def main(
 ) -> None:
     """Global CLI options."""
     return
+@app.command()
+def tui() -> None:
+    """Launch the Terminal User Interface."""
+    from .tui.app import KCodeTUI
+    app = KCodeTUI()
+    app.run()
