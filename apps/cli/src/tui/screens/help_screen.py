@@ -1,4 +1,4 @@
-"""Help modal for TUI -- comprehensive keyboard shortcuts and command reference."""
+﻿"""Help modal for TUI -- comprehensive keyboard shortcuts and command reference."""
 from __future__ import annotations
 
 from textual.app import ComposeResult

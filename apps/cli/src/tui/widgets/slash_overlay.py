@@ -44,35 +44,35 @@ class SlashCommand:
 
 SLASH_COMMANDS: list[SlashCommand] = [
   # Session
-  SlashCommand("new",      "New Session",   "Start a fresh chat session",            "session",  icon="+", shortcut="Ctrl+N"),
-  SlashCommand("compact",  "Compact",       "Compact conversation to save tokens",   "session",  icon="~"),
-  SlashCommand("clear",    "Clear Chat",    "Clear the current chat display",        "session",  icon="x", shortcut="Ctrl+L"),
-  SlashCommand("sessions", "Sessions",      "List and switch between sessions",      "session",  icon="="),
-  SlashCommand("refresh",  "Refresh",       "Reload sessions list",                  "session",  icon="R"),
+  SlashCommand("new",      "New Session",   "Start a fresh chat session",            "session",  icon="➕", shortcut="Ctrl+N"),
+  SlashCommand("compact",  "Compact",       "Compact conversation to save tokens",   "session",  icon="⚙️"),
+  SlashCommand("clear",    "Clear Chat",    "Clear the current chat display",        "session",  icon="🗑️", shortcut="Ctrl+L"),
+  SlashCommand("sessions", "Sessions",      "List and switch between sessions",      "session",  icon="📋"),
+  SlashCommand("refresh",  "Refresh",       "Reload sessions list",                  "session",  icon="🔄"),
   # View
-  SlashCommand("sidebar",  "Toggle Sidebar","Show / hide the sidebar panel",         "view",     alias="sb", icon="#", shortcut="Ctrl+B"),
-  SlashCommand("theme",    "Cycle Theme",   "Switch between available themes",       "view",     alias="t",  icon="P"),
+  SlashCommand("sidebar",  "Toggle Sidebar","Show / hide the sidebar panel",         "view",     alias="sb", icon="👁️", shortcut="Ctrl+B"),
+  SlashCommand("theme",    "Cycle Theme",   "Switch between available themes",       "view",     alias="t",  icon="🎨"),
   # Model
-  SlashCommand("model",    "Switch Model",  "Change the active LLM model",           "model",    alias="m",  icon="M"),
+  SlashCommand("model",    "Switch Model",  "Change the active LLM model",           "model",    alias="m",  icon="🤖"),
   # Config
-  SlashCommand("approval", "Approval Mode", "Toggle ask / auto approval",            "config",   alias="ap", icon="S"),
+  SlashCommand("approval", "Approval Mode", "Toggle ask / auto approval",            "config",   alias="ap", icon="🛡️"),
   # Help
-  SlashCommand("help",     "Help",          "Show keyboard shortcuts and commands",  "help",     alias="h",  icon="?", shortcut="Ctrl+H"),
-  SlashCommand("doctor",   "Doctor",        "Check runtime health status",           "help",     alias="dr", icon="+"),
-  SlashCommand("init",     "Init Project",  "Create/Update kcode.workspace.md",      "project",  icon="F"),
+  SlashCommand("help",     "Help",          "Show keyboard shortcuts and commands",  "help",     alias="h",  icon="❓", shortcut="Ctrl+H"),
+  SlashCommand("doctor",   "Doctor",        "Check runtime health status",           "help",     alias="dr", icon="⚕️"),
+  SlashCommand("init",     "Init Project",  "Create/Update kcode.workspace.md",      "project",  icon="📁"),
   # App
-  SlashCommand("quit",     "Quit",          "Exit KCode TUI",                        "app",      alias="q",  icon="X", shortcut="Ctrl+Q"),
+  SlashCommand("quit",     "Quit",          "Exit KCode TUI",                        "app",      alias="q",  icon="🔟", shortcut="Ctrl+Q"),
 ]
 
 # Category display order, labels, and icons
 CATEGORY_META: list[tuple[str, str, str]] = [
-  ("session", "Session",  "[chat]"),
-  ("view",    "View",     "[eye]"),
-  ("model",   "Model",    "[bot]"),
-  ("config",  "Config",   "[gear]"),
-  ("project", "Project",  "[folder]"),
-  ("help",    "Help",     "[?]"),
-  ("app",     "App",      "[exit]"),
+  ("session", "Session",  "💬"),  # speech balloon
+  ("view",    "View",     "👁"),  # eye
+  ("model",   "Model",    "🤖"),  # robot face
+  ("config",  "Config",   "⚙️"),  # gear
+  ("project", "Project",  "📁"),  # folder
+  ("help",    "Help",     "❓"),      # red question mark
+  ("app",     "App",      "🚪"),  # door
 ]
 
 
@@ -387,7 +387,10 @@ class SlashOverlay(Widget):
     filtered = filter_slash_commands(self._commands, self._query)
 
     if not filtered:
-      container.mount(Static("  No matching commands. Try a different query.", classes="slash-empty"))
+      container.mount(Static(
+        "\n  \u2716  No matching commands\n  \u2514  Try a shorter or different query",
+        classes="slash-empty",
+      ))
       self._visible_ids = []
       return
 
@@ -412,6 +415,9 @@ class SlashOverlay(Widget):
     if self._selected_idx >= len(self._visible_ids):
       self._selected_idx = max(0, len(self._visible_ids) - 1)
       self._update_selection()
+
+    # Show scroll hint when content overflows
+    self._update_scroll_hint(container)
 
   def _build_item_widget(
     self, cmd: SlashCommand, selected: bool, idx: int,
@@ -467,6 +473,20 @@ class SlashOverlay(Widget):
       widget.scroll_visible()
     except Exception:
       pass
+
+  def _update_scroll_hint(self, container: Widget) -> None:
+    """Add or remove a scroll-overflow hint at the bottom of the overlay."""
+    try:
+      existing = container.query(".slash-scroll-hint")
+      for e in existing:
+        e.remove()
+    except Exception:
+      pass
+    total = len(self._visible_ids)
+    if total > self._MAX_VISIBLE:
+      sel = self._selected_idx + 1
+      hint = f"  \u25b2\u25bc  {sel}/{total}  (arrow keys to scroll)"
+      container.mount(Static(hint, classes="slash-scroll-hint"))
 
   def on_click(self, event) -> None:
     """Handle clicks on command items."""

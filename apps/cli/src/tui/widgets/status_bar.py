@@ -1,4 +1,4 @@
-"""Status bar showing agent state, tokens, cost, context utilization, and model.
+﻿"""Status bar showing agent state, tokens, cost, context utilization, and model.
 
 Features:
   - Color-coded state display (IDLE=green, THINKING=yellow, TOOL_RUNNING=blue, ERROR=red)

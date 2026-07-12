@@ -1,4 +1,4 @@
-"""Tests for the inline slash-command overlay widget."""
+﻿"""Tests for the inline slash-command overlay widget."""
 from __future__ import annotations
 
 from apps.cli.src.tui.widgets.slash_overlay import (
@@ -137,10 +137,11 @@ class TestCustomCommandInjection:
         assert any(c.id == "user:review" for c in overlay._commands)
 
 
-class TestIconAscii:
-    def test_all_icons_ascii(self) -> None:
+class TestIconPresent:
+    def test_all_icons_present(self) -> None:
+        """Every built-in command must have a non-empty icon (Unicode OK)."""
         for cmd in SLASH_COMMANDS:
-            assert cmd.icon.isascii(), f"{cmd.id} icon not ASCII"
+            assert cmd.icon, f"{cmd.id} missing icon"
 class TestArgumentDialog:
   """Tests for SlashOverlay.ArgumentDialog static methods."""
 
