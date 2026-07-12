@@ -224,6 +224,10 @@ class StreamMessage(Widget):
 
   }
 
+  StreamMessage.thinking {
+    border: tall $warning 40%;
+  }
+
   StreamMessage.flash {
 
     border: tall $success;
@@ -255,16 +259,21 @@ class StreamMessage(Widget):
     self._cursor_visible: bool = True
 
     self._streaming: bool = True
+    self._thinking_phase: bool = True
+    self._thinking_elapsed: int = 0
+    self._thinking_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠏", "⠏"]
+    self._thinking_idx: int = 0
 
   def compose(self) -> ComposeResult:
 
-    yield Static("\u2588", id="stream-text")
+    yield Static("\u258e", id="stream-text")
 
   def on_mount(self) -> None:
 
-    """Start cursor blink timer."""
+    """Start cursor blink and thinking indicator timers."""
 
     self.set_interval(0.5, self._blink_cursor)
+    self.set_interval(0.12, self._tick_thinking)
 
   def _blink_cursor(self) -> None:
 
@@ -279,40 +288,52 @@ class StreamMessage(Widget):
     # Only re-render if we have content (avoid overwriting empty state)
 
     if self._parts:
-
       self._render_incremental()
+
+  def _tick_thinking(self) -> None:
+    """Animate thinking spinner when no text has been received yet."""
+    if not self._streaming or not self._thinking_phase:
+      return
+    frame = self._thinking_frames[self._thinking_idx % len(self._thinking_frames)]
+    self._thinking_idx += 1
+    try:
+      text_widget = self.query_one("#stream-text", Static)
+      text_widget.update(f"[bold yellow]{frame}[/bold yellow] [dim]{self._thinking_elapsed}s thinking...[/dim]")
+      if self._thinking_idx % 8 == 0:
+        self._thinking_elapsed += 1
+    except Exception:
+      pass
+    if not self.has_class("thinking"):
+      self.call_after_refresh(lambda: self.add_class("thinking"))
 
   def append_delta(self, delta: str) -> None:
 
     """Append text delta. Re-renders Markdown only when threshold is exceeded."""
 
+    if self._thinking_phase:
+      self._thinking_phase = False
+      self.remove_class("thinking")
     self._parts.append(delta)
-
     total_len = sum(len(p) for p in self._parts)
-
-    if total_len - self._dirty_len >= self._RENDER_THRESHOLD:
-
+    if total_len - self._dirty_len >= self._RENDER_THRESHOLD or total_len == len(delta):
       self._render_incremental()
 
   def _render_incremental(self) -> None:
-
     """Re-render the Markdown preview with cursor."""
-
-    full = "".join(self._parts)
-
-    self._dirty_len = len(full)
-
-    text_widget = self.query_one("#stream-text", Static)
-
-    cursor = "\u2588" if self._cursor_visible else ""
-
     try:
-
-      text_widget.update(Markdown(full + " " + cursor))
-
+      text_widget = self.query_one("#stream-text", Static)
     except Exception:
-
-      text_widget.update(full + " " + cursor)
+      return
+    full = "".join(self._parts)
+    self._dirty_len = len(full)
+    cursor = "▎" if self._cursor_visible else ""
+    try:
+      text_widget.update(Markdown(full + " " + cursor))
+    except Exception:
+      try:
+        text_widget.update(full + " " + cursor)
+      except Exception:
+        pass
 
   def finalize(self) -> str:
 
@@ -334,9 +355,9 @@ class StreamMessage(Widget):
 
     # Brief highlight flash on finalization
 
+    self.remove_class("thinking")
     self.add_class("flash")
-
-    self.set_timer(0.4, lambda: self.remove_class("flash"))
+    self.set_timer(0.5, lambda: self.remove_class("flash"))
 
     return full
 
@@ -397,7 +418,6 @@ class ChatArea(VerticalScroll):
     self._active_tools: dict[str, ToolCallEntry] = {}
 
     self._welcome_shown: bool = False
-
 
   # ── Welcome banner ───────────────────────────────────────────────────
 
@@ -578,7 +598,6 @@ class ChatArea(VerticalScroll):
     """Scroll to bottom after a short delay to allow layout to settle."""
 
     def _do_scroll() -> None:
-
-      self.scroll_end(animate=False)
-
+      use_anim = self._stream_widget is not None
+      self.scroll_end(animate=use_anim, duration=0.08 if use_anim else 0)
     self.call_after_refresh(_do_scroll)

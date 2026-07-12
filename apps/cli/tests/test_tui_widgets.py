@@ -16,6 +16,7 @@ class TestStatusBar:
   def test_update_status_keywords_only(self):
     from apps.cli.src.tui.widgets.status_bar import StatusBar
     bar = StatusBar()
+    bar.set_timer = lambda *a, **kw: None
     bar.update_status(state="THINKING", tokens=1234, model_name="gpt-4o")
     assert bar.state == "THINKING"
     assert bar.tokens == 1234
@@ -24,6 +25,7 @@ class TestStatusBar:
   def test_render_shows_parts(self):
     from apps.cli.src.tui.widgets.status_bar import StatusBar
     bar = StatusBar()
+    bar.set_timer = lambda *a, **kw: None
     bar.update_status(state="IDLE", model_name="gpt-4o")
     text = bar.render()
     assert "IDLE" in str(text)

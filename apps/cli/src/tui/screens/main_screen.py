@@ -1,4 +1,4 @@
-﻿"""Main TUI screen -- layout, streaming, tool approval, session management."""
+"""Main TUI screen -- layout, streaming, tool approval, session management."""
 
 from __future__ import annotations
 
@@ -85,6 +85,7 @@ class MainScreen(Screen):
     ("ctrl+b", "toggle_sidebar", "Sidebar"),
 
     ("ctrl+h", "help", "Help"),
+    ("ctrl+t", "model_picker", "Model"),
 
     ("ctrl+q", "Quit"),
 
@@ -203,6 +204,8 @@ class MainScreen(Screen):
     input_area.deactivate_slash_overlay()
 
     input_area.clear_slash_text()
+
+    input_area.focus()
 
     if cmd_id:
 
@@ -354,6 +357,10 @@ class MainScreen(Screen):
 
     self.notify("Command cancelled.", severity="information")
 
+    input_area = self.query_one(InputArea)
+
+    input_area.focus()
+
   def on_input_area_dismiss_slash(self, event: InputArea.DismissSlash) -> None:
 
     """Escape while overlay is open -- dismiss it."""
@@ -365,6 +372,8 @@ class MainScreen(Screen):
     input_area = self.query_one(InputArea)
 
     input_area.deactivate_slash_overlay()
+
+    input_area.focus()
 
   def on_slash_overlay_command_selected(self, event: SlashOverlay.CommandSelected) -> None:
 
@@ -431,6 +440,8 @@ class MainScreen(Screen):
       status.update_status(state="IDLE")
 
       self.notify("Streaming cancelled")
+      input_area = self.query_one(InputArea)
+      input_area.focus()
 
   # ─── Streaming agent loop ──────────────────────────────────────────
 
@@ -443,10 +454,14 @@ class MainScreen(Screen):
     status = self.query_one(StatusBar)
 
     status.update_status(state="THINKING")
+    self._agent_step = getattr(self, "_agent_step", 0) + 1
+    status.set_step_count(self._agent_step)
 
     chat = self.query_one(ChatArea)
 
     chat.start_stream("assistant")
+
+    status.set_streaming_hint(True)
 
     try:
 
@@ -516,9 +531,11 @@ class MainScreen(Screen):
 
             cost=cost,
 
-            context_usage=ctx,
+            context_utilization=ctx,
 
           )
+
+          status.set_streaming_hint(False)
 
     except Exception as e:
 
@@ -528,9 +545,12 @@ class MainScreen(Screen):
 
       status.update_status(state="IDLE")
 
-    finally:
+      status.set_streaming_hint(False)
 
+    finally:
       self._is_streaming = False
+      input_area = self.query_one(InputArea)
+      input_area.focus()
 
   # ─── Session management ────────────────────────────────────────────
 
@@ -672,7 +692,8 @@ class MainScreen(Screen):
 
       "model":     self._open_model_picker,
 
-      "approval":  self._toggle_approval,
+      "model_picker": self.action_model_picker,
+    "approval":  self._toggle_approval,
 
       "theme":     self._cycle_theme,
 
@@ -752,7 +773,7 @@ class MainScreen(Screen):
 
     self.notify("Chat cleared")
 
-  def _open_model_picker(self) -> None:
+  def action_model_picker(self) -> None:
 
     """Open the model picker modal."""
 
@@ -773,6 +794,11 @@ class MainScreen(Screen):
         status.update_status(model_name=chosen)
 
         self.notify(f"Model: {chosen}")
+      self.query_one(InputArea).focus()
+
+      input_area = self.query_one(InputArea)
+
+      input_area.focus()
 
     self.run_worker(_run())
 
@@ -854,7 +880,11 @@ class MainScreen(Screen):
 
     """Show the help screen."""
 
-    self.app.push_screen(HelpScreen())
+    async def _show() -> None:
+      await self.app.push_screen_wait(HelpScreen())
+      input_area = self.query_one(InputArea)
+      input_area.focus()
+    self.run_worker(_show())
 
   def _compact_context(self) -> None:
 
@@ -925,6 +955,8 @@ class MainScreen(Screen):
   # ─── Actions ────────────────────────────────────────────────────────
 
   def action_new_session(self) -> None:
+    """Ctrl+N -- create a new session and reset step counter."""
+    self._agent_step = 0
 
     self.on_session_panel_new_session(SessionPanel.NewSession())
 

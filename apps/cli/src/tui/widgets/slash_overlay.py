@@ -414,6 +414,28 @@ class SlashOverlay(Widget):
     # Show scroll hint when content overflows
     self._update_scroll_hint(container)
 
+  @staticmethod
+  def _highlight_match(text: str, query: str) -> str:
+    """Sequential fuzzy highlight for *text* against *query*.
+
+    Returns a Rich-markup string with matched characters wrapped in
+    ``[bold cyan]...[/bold cyan]`` so the dropdown can render
+    progressively better matches as the user types.
+    """
+    if not query:
+      return text
+
+    q = query.lower()
+    qi = 0
+    out: list[str] = []
+    for ch in text:
+      if qi < len(q) and ch.lower() == q[qi]:
+        out.append(f"[bold cyan]{ch}[/bold cyan]")
+        qi += 1
+      else:
+        out.append(ch)
+    return "".join(out)
+
   def _build_item_widget(
     self, cmd: SlashCommand, selected: bool, idx: int,
   ) -> Widget:
@@ -426,7 +448,7 @@ class SlashOverlay(Widget):
     item.id = f"slash-item-{idx}"
 
     # Row 1: icon + title + shortcut/alias
-    title_text = f"{cmd.icon}  {cmd.label}"
+    title_text = f"{cmd.icon}  {self._highlight_match(cmd.label, self._query)}"
     row1_children: list[Widget] = [
       Static(title_text, classes="slash-title"),
     ]
