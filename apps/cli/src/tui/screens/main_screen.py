@@ -17,6 +17,8 @@ from ..widgets.input_area import InputArea
 from ..widgets.status_bar import StatusBar
 from ..widgets.session_panel import SessionPanel
 from ..widgets.slash_overlay import SlashOverlay
+from ..utils.custom_commands import load_user_commands, load_project_commands
+from ..widgets.slash_overlay import SlashCommand
 
 from .model_picker import ModelPicker
 from .help_screen import HelpScreen
@@ -75,7 +77,7 @@ class MainScreen(Screen):
     yield Footer()
 
   def on_mount(self) -> None:
-    """Initialize status bar with model info and load sessions."""
+    """Initialize status bar with model info, load sessions, and wire custom commands."""
     status = self.query_one(StatusBar)
     approval = self._runtime._config.approval_mode
     status.update_status(
@@ -84,6 +86,7 @@ class MainScreen(Screen):
       approval_mode=approval if isinstance(approval, str) else approval.value,
     )
     self._refresh_sessions()
+    self._load_custom_commands()
 
   # ─── Slash overlay integration ─────────────────────────────────────
 
@@ -119,6 +122,32 @@ class MainScreen(Screen):
     if cmd_id:
       self._dispatch_command(cmd_id, content)
 
+
+  def _load_custom_commands(self) -> None:
+    """Load user-level and workspace-level custom commands into the overlay."""
+    try:
+      overlay = self.query_one(SlashOverlay)
+      workspace_root = Path(self._runtime._config.workspace_root) if self._runtime._config.workspace_root else Path.cwd()
+      user_cmds = load_user_commands()
+      project_cmds = load_project_commands(workspace_root)
+      custom: list[SlashCommand] = []
+      for cmd in (*user_cmds, *project_cmds):
+        custom.append(
+          SlashCommand(
+            id=cmd.id,
+            label=cmd.title,
+            description=cmd.description,
+            content=cmd.content,
+            category="Custom",
+            icon="#",
+            argument_names=cmd.argument_names,
+            is_custom=True,
+          )
+        )
+      overlay.set_custom_commands(custom)
+    except Exception:
+      # Custom commands are optional; do not break mount if loader fails.
+      pass
   def _dispatch_command(self, cmd_id: str, content: str | None) -> None:
     """Dispatch a command, showing argument dialog if placeholders are present."""
     if content:

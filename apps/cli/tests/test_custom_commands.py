@@ -44,6 +44,23 @@ class TestCustomCommandParsing:
         assert cmds[0].source == "project"
         assert cmds[0].id == "project:lint"
 
+
+    def test_nested_dir_ids(self, tmp_path: Path) -> None:
+        d = tmp_path / "git"
+        d.mkdir()
+        (d / "review.md").write_text("# Review\nCheck changes", encoding="utf-8")
+        cmds = _load_commands_from_dir(tmp_path, "project")
+        assert any(c.id == "project:git:review" for c in cmds)
+
+    def test_oversize_file_skipped(self, tmp_path: Path) -> None:
+        (tmp_path / "big.md").write_text("# Big\n" + ("x" * (128 * 1024 + 1)), encoding="utf-8")
+        cmds = _load_commands_from_dir(tmp_path, "user")
+        assert cmds == []
+
+    def test_argument_names_list_not_none(self, tmp_path: Path) -> None:
+        (tmp_path / "fix.md").write_text("# Fix\nFix $ISSUE_ID", encoding="utf-8")
+        cmds = _load_commands_from_dir(tmp_path, "user")
+        assert isinstance(cmds[0].argument_names, list)
     def test_combined(self, tmp_path: Path) -> None:
         user_dir = tmp_path / "user_cmds"
         user_dir.mkdir()

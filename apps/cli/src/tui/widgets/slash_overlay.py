@@ -3,24 +3,26 @@
 Inspired by OpenCode/Crush command palette: typed '/' opens a non-modal
 overlay that filters in real time, grouped by category with icons, aliases,
 keyboard shortcuts, and rich visual hints. Supports both built-in and
-custom commands from user/project directories.
+custom commands from user/project directories (including nested dirs).
 
-Visual enhancements:
-  - Two-line rendering: title (bold) + description (muted)
+Visual enhancements (OpenCode-inspired):
+  - Two-line rendering: icon + title (bold) + shortcut badge right-aligned
+    on line 1; description (muted) on line 2
   - Selected item with primary background highlight
   - No-results placeholder with hint
-  - Category section headers with icons
-  - Proper overlay positioning with shadow effect
+  - Category section headers with emoji icons and divider lines
+  - Scroll-to-selected on arrow key navigation
+  - Keyboard shortcut badges rendered as dim cyan pills
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
-from textual.reactive import reactive
 from textual.widget import Widget
 from textual.message import Message
-from textual.widgets import Static, Rule, Input
+from textual.widgets import Static, Input
 
 
 @dataclass(frozen=True)
@@ -37,43 +39,43 @@ class SlashCommand:
   content: str | None = None  # For custom commands, the template content
 
 
-# ── Built-in command catalogue ──────────────────────────────────────────
+# -- Built-in command catalogue -----------------------------------------------
 
 SLASH_COMMANDS: list[SlashCommand] = [
   # Session
-  SlashCommand("new",      "New Session",   "Start a fresh chat session",            "session",  icon="\u2795", shortcut="Ctrl+N"),
-  SlashCommand("compact",  "Compact",       "Compact conversation to save tokens",   "session",  icon="\u267b", shortcut="Ctrl+K"),
-  SlashCommand("clear",    "Clear Chat",    "Clear the current chat display",        "session",  icon="\u2716", shortcut="Ctrl+L"),
-  SlashCommand("sessions", "Sessions",      "List and switch between sessions",      "session",  icon="\U0001f4cb"),
-  SlashCommand("refresh",  "Refresh",       "Reload sessions list",                  "session",  icon="\U0001f504"),
+  SlashCommand("new",      "New Session",   "Start a fresh chat session",            "session",  icon="+", shortcut="Ctrl+N"),
+  SlashCommand("compact",  "Compact",       "Compact conversation to save tokens",   "session",  icon="~", shortcut="Ctrl+K"),
+  SlashCommand("clear",    "Clear Chat",    "Clear the current chat display",        "session",  icon="x", shortcut="Ctrl+L"),
+  SlashCommand("sessions", "Sessions",      "List and switch between sessions",      "session",  icon="="),
+  SlashCommand("refresh",  "Refresh",       "Reload sessions list",                  "session",  icon="R"),
   # View
-  SlashCommand("sidebar",  "Toggle Sidebar","Show / hide the sidebar panel",         "view",     alias="sb", icon="\u25a0", shortcut="Ctrl+B"),
-  SlashCommand("theme",    "Cycle Theme",   "Switch between available themes",       "view",     alias="t",  icon="\U0001f3a8"),
+  SlashCommand("sidebar",  "Toggle Sidebar","Show / hide the sidebar panel",         "view",     alias="sb", icon="#", shortcut="Ctrl+B"),
+  SlashCommand("theme",    "Cycle Theme",   "Switch between available themes",       "view",     alias="t",  icon="P"),
   # Model
-  SlashCommand("model",    "Switch Model",  "Change the active LLM model",           "model",    alias="m",  icon="\U0001f916"),
+  SlashCommand("model",    "Switch Model",  "Change the active LLM model",           "model",    alias="m",  icon="M"),
   # Config
-  SlashCommand("approval", "Approval Mode", "Toggle ask / auto approval",            "config",   alias="ap", icon="\U0001f6e1"),
+  SlashCommand("approval", "Approval Mode", "Toggle ask / auto approval",            "config",   alias="ap", icon="S"),
   # Help
-  SlashCommand("help",     "Help",          "Show keyboard shortcuts and commands",  "help",     alias="h",  icon="\u2753", shortcut="Ctrl+H"),
-  SlashCommand("doctor",   "Doctor",        "Check runtime health status",           "help",     alias="dr", icon="\u2695"),
-  SlashCommand("init",     "Init Project",  "Create/Update kcode.workspace.md",      "project",  icon="\U0001f4c1"),
+  SlashCommand("help",     "Help",          "Show keyboard shortcuts and commands",  "help",     alias="h",  icon="?", shortcut="Ctrl+H"),
+  SlashCommand("doctor",   "Doctor",        "Check runtime health status",           "help",     alias="dr", icon="+"),
+  SlashCommand("init",     "Init Project",  "Create/Update kcode.workspace.md",      "project",  icon="F"),
   # App
-  SlashCommand("quit",     "Quit",          "Exit KCode TUI",                        "app",      alias="q",  icon="\u2716", shortcut="Ctrl+Q"),
+  SlashCommand("quit",     "Quit",          "Exit KCode TUI",                        "app",      alias="q",  icon="X", shortcut="Ctrl+Q"),
 ]
 
 # Category display order, labels, and icons
 CATEGORY_META: list[tuple[str, str, str]] = [
-  ("session", "Session",  "\U0001f4ac"),
-  ("view",    "View",     "\U0001f441"),
-  ("model",   "Model",    "\U0001f916"),
-  ("config",  "Config",   "\u2699"),
-  ("project", "Project",  "\U0001f4c1"),
-  ("help",    "Help",     "\u2753"),
-  ("app",     "App",      "\U0001f680"),
+  ("session", "Session",  "[chat]"),
+  ("view",    "View",     "[eye]"),
+  ("model",   "Model",    "[bot]"),
+  ("config",  "Config",   "[gear]"),
+  ("project", "Project",  "[folder]"),
+  ("help",    "Help",     "[?]"),
+  ("app",     "App",      "[exit]"),
 ]
 
 
-# ── Filtering ───────────────────────────────────────────────────────────
+# -- Filtering -----------------------------------------------------------------
 
 def filter_slash_commands(
   commands: list[SlashCommand],
@@ -117,417 +119,336 @@ def group_by_category(
     if cat_key in by_cat:
       result.append((cat_label, cat_icon, by_cat[cat_key]))
       seen.add(cat_key)
-  # Any leftover categories not in CATEGORY_META
+
+  # Catch any categories not in CATEGORY_META
   for cat_key, cmds in by_cat.items():
     if cat_key not in seen:
-      result.append((cat_key.title(), "\u25cf", cmds))
+      result.append((cat_key, ">", cmds))
+
   return result
 
 
-# ── Widget ──────────────────────────────────────────────────────────────
-
 class SlashOverlay(Widget):
-  """Non-modal inline overlay that appears above the input area.
+  """Inline overlay that appears above the input area.
 
-  Shows a filterable, grouped list of slash commands with keyboard
-  navigation, real-time search, and mouse/click support.
+  Renders grouped command items with icons, two-line layout,
+  and keyboard navigation. Hides itself when not active.
   """
+
+  # Total visible commands before scrolling
+  _MAX_VISIBLE = 10
 
   DEFAULT_CSS = """
   SlashOverlay {
     display: none;
     height: auto;
-    max-height: 24;
-    margin: 0 1;
-    padding: 0;
+    max-height: 32;
+    overflow: hidden;
     background: $surface;
-    border: tall $primary;
+    border: tall $primary 40%;
+    margin: 0 2;
+    padding: 0;
     layer: overlay;
-    overflow-y: auto;
   }
 
   SlashOverlay.visible {
     display: block;
   }
 
-  /* ── Header ── */
-  #slash-header {
-    height: 1;
-    padding: 0 1;
-    color: $text-muted;
-    background: $primary 20%;
-  }
-
-  /* ── Command list container ── */
-  #slash-commands {
+  .slash-scroll {
     height: auto;
-    max-height: 20;
+    max-height: 28;
     overflow-y: auto;
+    scrollbar-size-vertical: 1;
   }
 
-  /* ── Category header ── */
+  /* Category header */
   .slash-category {
     height: 1;
     padding: 0 1;
+    margin: 1 0 0 0;
     color: $accent;
-    text-style: bold;
-    background: $primary 10%;
+    text-style: bold dim;
   }
 
-  /* ── Divider ── */
-  .slash-divider {
-    height: 1;
-    margin: 0 1;
+  .slash-category:first-child {
+    margin-top: 0;
   }
 
-  /* ── Command row (two-line: title + description) ── */
+  /* Command item - two-line layout */
   .slash-item {
     height: auto;
     min-height: 2;
     padding: 0 1;
-    background: transparent;
+    margin: 0;
   }
 
+  .slash-item .slash-row1 {
+    height: 1;
+    width: 100%;
+  }
+
+  .slash-item .slash-row2 {
+    height: 1;
+    width: 100%;
+  }
+
+  /* Icon + title on row 1 */
+  .slash-icon {
+    width: 2;
+    text-align: center;
+    color: $accent;
+  }
+
+  .slash-title {
+    width: 1fr;
+    color: $text;
+    text-style: bold;
+  }
+
+  /* Shortcut badge on the right of row 1 */
+  .slash-shortcut {
+    width: auto;
+    min-width: 8;
+    text-align: right;
+    color: $text-muted;
+    text-style: dim;
+    padding: 0 0 0 1;
+  }
+
+  /* Alias hint */
+  .slash-alias {
+    width: auto;
+    min-width: 3;
+    text-align: right;
+    color: $warning;
+    text-style: dim;
+    padding: 0 1 0 0;
+  }
+
+  /* Description on row 2 */
+  .slash-desc {
+    width: 1fr;
+    padding-left: 4;
+    color: $text-muted;
+    text-style: dim;
+  }
+
+  /* Selected state -- primary background highlight */
+  .slash-item.selected {
+    background: $primary 25%;
+  }
+  .slash-item.selected .slash-title {
+    color: $text;
+    text-style: bold;
+  }
+  .slash-item.selected .slash-icon {
+    color: $primary;
+    text-style: bold;
+  }
+
+  /* Hover effect */
   .slash-item:hover {
     background: $primary 15%;
   }
 
-  .slash-item.selected {
-    background: $primary 30%;
-  }
-
-  /* Top row: icon + name + alias + shortcut */
-  .slash-item .slash-row-top {
-    height: 1;
-    width: 1fr;
-  }
-
-  /* Bottom row: description */
-  .slash-item .slash-row-bottom {
-    height: 1;
-    width: 1fr;
-  }
-
-  .slash-icon {
-    width: 3;
-    min-width: 3;
-    text-align: center;
-  }
-
-  .slash-name {
-    width: 14;
-    min-width: 14;
-    text-style: bold;
-    color: $text;
-  }
-
-  .slash-item.selected .slash-name {
-    color: $text;
-    text-style: bold;
-  }
-
-  .slash-alias {
-    width: 6;
-    min-width: 6;
-    color: $text-muted;
-  }
-
-  .slash-shortcut {
-    width: 10;
-    min-width: 10;
-    text-align: right;
-    color: $text-muted;
-  }
-
-  .slash-desc {
-    width: 1fr;
-    color: $text-muted;
-    text-style: italic;
-  }
-
-  .slash-item.selected .slash-desc {
-    color: $text;
-  }
-
-  .slash-custom-badge {
-    width: 7;
-    min-width: 7;
-    text-align: center;
-    color: $warning;
-  }
-
-  /* ── No results ── */
-  .slash-no-results {
+  /* No results placeholder */
+  .slash-empty {
     height: 3;
     padding: 1 2;
     color: $text-muted;
-    text-style: italic;
+    text-style: dim italic;
     text-align: center;
   }
 
-  /* ── Argument dialog ── */
-  #arg-dialog {
-    display: none;
-    height: auto;
-    margin: 1 2;
-    padding: 1 2;
+  /* Scroll hint at bottom when content overflows */
+  .slash-scroll-hint {
+    height: 1;
+    text-align: center;
+    color: $text-muted;
+    text-style: dim;
     background: $surface;
-    border: tall $warning;
-  }
-
-  #arg-dialog.visible {
-    display: block;
-  }
-
-  .arg-prompt {
-    height: auto;
-    color: $text;
-    margin-bottom: 1;
-  }
-
-  .arg-input {
-    height: 3;
-    margin: 0;
   }
   """
 
-  DEFAULT_CLASSES = ""
-
-  # ── Reactives ──────────────────────────────────────────────────────
-
-  selected_id: reactive[str | None] = reactive(None)
-
-  # ── Messages ───────────────────────────────────────────────────────
-
   class CommandSelected(Message):
-    """Posted when user clicks a command item."""
-    def __init__(self, command_id: str, content: str | None) -> None:
+    """Posted when user selects a command."""
+    def __init__(self, command_id: str, content: str | None = None) -> None:
       self.command_id = command_id
       self.content = content
       super().__init__()
 
-  # ── Init ───────────────────────────────────────────────────────────
-
   def __init__(self, **kwargs) -> None:
     super().__init__(**kwargs)
+    self._active: bool = False
+    self._query: str = ""
     self._commands: list[SlashCommand] = list(SLASH_COMMANDS)
-    self._filtered: list[SlashCommand] = list(SLASH_COMMANDS)
+    self._custom_commands: list[SlashCommand] = []
     self._selected_idx: int = 0
-    self._nav_items: list[tuple[str, SlashCommand | None]] = []  # (widget_id, cmd_or_none)
+    self._visible_ids: list[str] = []
+    self.selected_id: str | None = None
 
-  def _load_custom_commands(self) -> None:
-    """Load custom commands from user/project dirs."""
-    try:
-      from apps.cli.src.tui.utils.custom_commands import load_all_custom_commands
-      from pathlib import Path
-      workspace = Path.cwd()
-      customs = load_all_custom_commands(workspace)
-      custom_slash = [
-        SlashCommand(
-          id=c.id,
-          label=c.title,
-          description=c.description or c.content[:60] if c.content else "",
-          category="custom",
-          icon="\U0001f4dd",
-          is_custom=True,
-          content=c.content,
-        )
-        for c in customs
-      ]
-      self._commands = list(SLASH_COMMANDS) + custom_slash
-      self._filtered = list(self._commands)
-    except Exception:
-      self._commands = list(SLASH_COMMANDS)
-      self._filtered = list(SLASH_COMMANDS)
+  # -- Public API ------------------------------------------------------------
 
-  # ── Compose ────────────────────────────────────────────────────────
+  def set_custom_commands(self, custom: list[SlashCommand]) -> None:
+    """Inject custom commands (loaded from user/project dirs).
 
-  def compose(self) -> ComposeResult:
-    yield Static(f"{len(self._commands)} commands available", id="slash-header")
-    with Vertical(id="slash-commands"):
-      pass  # Populated dynamically
+    Each item should be a SlashCommand with at least {id, label, description}.
+    Optional fields: category, icon, shortcut, is_custom, content, argument_names.
+    """
+    self._custom_commands = custom
+    self._commands = list(SLASH_COMMANDS) + custom
 
-  def on_mount(self) -> None:
-    self._load_custom_commands()
-    self._filtered = list(self._commands)
-    self._rebuild_list()
-
-  # ── Public API ─────────────────────────────────────────────────────
-
-  def show_overlay(self, query: str = "") -> None:
-    """Show the overlay and apply initial filter."""
-    self._load_custom_commands()
+  def show_overlay(self, query: str) -> None:
+    """Show overlay with optional initial filter."""
+    self._active = True
+    self._query = query
+    self._selected_idx = 0
     self.add_class("visible")
-    self._update_filter(query)
-    # Focus management -- let input area keep focus
-    self.scroll_visible()
+    self._rebuild()
 
   def hide_overlay(self) -> None:
-    """Hide the overlay."""
+    """Hide and reset."""
+    self._active = False
+    self._query = ""
+    self._selected_idx = 0
     self.remove_class("visible")
+    self._rebuild()
 
   def update_filter(self, query: str) -> None:
-    """Update the filter text and rebuild list."""
-    self._update_filter(query)
+    """Update the filter text (called as user types)."""
+    self._query = query
+    self._selected_idx = 0
+    self._rebuild()
 
   def move_up(self) -> None:
-    """Move selection up, skipping category headers."""
-    if not self._nav_items:
-      return
-    for _ in range(len(self._nav_items)):
-      self._selected_idx = (self._selected_idx - 1) % len(self._nav_items)
-      if self._nav_items[self._selected_idx][1] is not None:
-        break
-    self._update_selection_visual()
-    self._scroll_to_selected()
+    """Move selection up."""
+    if self._visible_ids:
+      self._selected_idx = max(0, self._selected_idx - 1)
+      self._update_selection()
+      self._scroll_to_selected()
 
   def move_down(self) -> None:
-    """Move selection down, skipping category headers."""
-    if not self._nav_items:
-      return
-    for _ in range(len(self._nav_items)):
-      self._selected_idx = (self._selected_idx + 1) % len(self._nav_items)
-      if self._nav_items[self._selected_idx][1] is not None:
-        break
-    self._update_selection_visual()
-    self._scroll_to_selected()
-
-  def get_selected(self) -> SlashCommand | None:
-    """Return the currently highlighted command, or None."""
-    if 0 <= self._selected_idx < len(self._nav_items):
-      return self._nav_items[self._selected_idx][1]
-    return None
+    """Move selection down."""
+    if self._visible_ids:
+      self._selected_idx = min(
+        len(self._visible_ids) - 1, self._selected_idx + 1
+      )
+      self._update_selection()
+      self._scroll_to_selected()
 
   def confirm_selection(self) -> tuple[str | None, str | None]:
-    """Return the selected command id and content, or (None, None)."""
-    cmd = self.get_selected()
-    if cmd:
-      return cmd.id, cmd.content if cmd.is_custom else None
-    return None, None
-
-  # ── internals ──────────────────────────────────────────────────────
-
-  def _update_filter(self, query: str) -> None:
-    self._filtered = filter_slash_commands(self._commands, query)
-    self._selected_idx = 0
-    self._rebuild_list()
-    # Select first non-header item
-    for i, (_, cmd) in enumerate(self._nav_items):
-      if cmd is not None:
-        self._selected_idx = i
+    """Confirm selection -- returns (command_id, content) or (None, None)."""
+    if not self._visible_ids:
+      return None, None
+    idx = min(self._selected_idx, len(self._visible_ids) - 1)
+    selected_id = self._visible_ids[idx]
+    # Find matching command to get content
+    content = None
+    for cmd in self._commands:
+      if cmd.id == selected_id:
+        content = cmd.content
         break
-    self._update_selection_visual()
+    return selected_id, content
 
-    # Update header
-    try:
-      header = self.query_one("#slash-header", Static)
-      q = (query or "").strip().lstrip("/")
-      if q:
-        header.update(f"Filter: {q}  ({len(self._filtered)} results)")
-      else:
-        header.update(f"{len(self._filtered)} commands available")
-    except Exception:
-      pass
+  # -- Compose ---------------------------------------------------------------
 
-  def _rebuild_list(self) -> None:
-    """Rebuild the command list from scratch."""
-    container = self.query_one("#slash-commands", Vertical)
-    # Remove all children
-    for child in list(container.children):
-      child.remove()
-    self._nav_items = []
+  def compose(self) -> ComposeResult:
+    # The content is built dynamically in _rebuild
+    yield Vertical(classes="slash-scroll", id="slash-scroll-container")
 
-    if not self._filtered:
-      # Show no-results placeholder
-      no_results = Static(
-        "  No matching commands  \n  Try a different search term",
-        classes="slash-no-results",
-      )
-      container.mount(no_results)
+  # -- Internal ---------------------------------------------------------------
+
+  def _rebuild(self) -> None:
+    """Rebuild the overlay content from scratch."""
+    container = self.query_one("#slash-scroll-container")
+    container.remove_children()
+
+    if not self._active:
+      self._visible_ids = []
       return
 
-    groups = group_by_category(self._filtered)
+    filtered = filter_slash_commands(self._commands, self._query)
 
-    for cat_idx, (cat_label, cat_icon, cmds) in enumerate(groups):
-      if cat_idx > 0:
-        # Add a thin separator between categories
-        sep = Rule(style="dim")
-        sep.add_class("slash-divider")
-        container.mount(sep)
+    if not filtered:
+      container.mount(Static("  No matching commands. Try a different query.", classes="slash-empty"))
+      self._visible_ids = []
+      return
 
+    # Custom category first if any custom commands match
+    groups = group_by_category(filtered)
+
+    item_idx = 0
+    for group_label, group_icon, group_cmds in groups:
       # Category header
-      header = Static(f" {cat_icon} {cat_label}", classes="slash-category")
-      container.mount(header)
-      self._nav_items.append((f"cat-{cat_label}", None))
+      header_text = f"  {group_icon} {group_label}"
+      container.mount(Static(header_text, classes="slash-category"))
 
-      for cmd in cmds:
-        widget_id = f"cmd-{cmd.id}"
-        item = self._make_command_row(cmd, widget_id)
-        container.mount(item)
-        self._nav_items.append((widget_id, cmd))
+      for cmd in group_cmds:
+        selected = item_idx == self._selected_idx
+        widget = self._build_item_widget(cmd, selected, item_idx)
+        container.mount(widget)
+        item_idx += 1
 
-  def _make_command_row(self, cmd: SlashCommand, widget_id: str) -> Widget:
-    """Create a single command row widget with two-line layout."""
-    alias_text = f"/{cmd.alias}" if cmd.alias else ""
-    shortcut_text = cmd.shortcut or ""
-    custom_badge = "custom" if cmd.is_custom else ""
+    self._visible_ids = [c.id for _, _, cmds in groups for c in cmds]
 
-    # Top row: icon + name + alias + shortcut + custom badge
-    top_row = Horizontal(
-      Static(f" {cmd.icon}", classes="slash-icon"),
-      Static(f"/{cmd.id}", classes="slash-name"),
-      Static(alias_text, classes="slash-alias"),
-      Static(shortcut_text, classes="slash-shortcut"),
-      Static(custom_badge, classes="slash-custom-badge"),
-      classes="slash-row-top",
-    )
+    # Ensure selected_idx is valid
+    if self._selected_idx >= len(self._visible_ids):
+      self._selected_idx = max(0, len(self._visible_ids) - 1)
+      self._update_selection()
 
-    # Bottom row: description
-    bottom_row = Horizontal(
-      Static("   ", classes="slash-icon"),  # Indent to align with name
-      Static(cmd.description, classes="slash-desc"),
-      classes="slash-row-bottom",
-    )
+  def _build_item_widget(
+    self, cmd: SlashCommand, selected: bool, idx: int,
+  ) -> Widget:
+    """Build a two-line widget for a single command."""
+    classes = "slash-item" + (" selected" if selected else "")
+    item = Vertical(classes=classes)
+    item._cmd_id = cmd.id  # type: ignore[attr-defined]
+    item._cmd_content = cmd.content  # type: ignore[attr-defined]
+    item._item_idx = idx  # type: ignore[attr-defined]
+    item.id = f"slash-item-{idx}"
 
-    row = Vertical(
-      top_row,
-      bottom_row,
-      classes="slash-item",
-      id=widget_id,
-    )
+    # Row 1: icon + title + shortcut/alias
+    title_text = f"{cmd.icon}  {cmd.label}"
+    row1_children: list[Widget] = [
+      Static(title_text, classes="slash-title"),
+    ]
+    if cmd.shortcut:
+      row1_children.append(
+        Static(f"  {cmd.shortcut}  ", classes="slash-shortcut")
+      )
+    elif cmd.alias:
+      row1_children.append(
+        Static(f"  /{cmd.alias}  ", classes="slash-alias")
+      )
+    row1 = Horizontal(*row1_children, classes="slash-row1")
 
-    # Store cmd_id on the row for click handling
-    row._cmd_id = cmd.id  # type: ignore[attr-defined]
-    row._cmd_content = cmd.content if cmd.is_custom else None  # type: ignore[attr-defined]
-    return row
+    # Row 2: description
+    row2 = Static(f"    {cmd.description}", classes="slash-row2 slash-desc")
 
-  def _update_selection_visual(self) -> None:
-    """Update CSS classes to reflect the current selection."""
+    item.mount(row1)
+    item.mount(row2)
+    return item
+
+  def _update_selection(self) -> None:
+    """Update CSS classes to reflect current selection."""
     try:
-      container = self.query_one("#slash-commands", Vertical)
-      for item in container.query(".slash-item"):
-        if self._nav_items and 0 <= self._selected_idx < len(self._nav_items):
-          selected_wid = self._nav_items[self._selected_idx][0]
-          if item.id == selected_wid:
-            item.add_class("selected")
-          else:
-            item.remove_class("selected")
-        else:
-          item.remove_class("selected")
-
-      # Update selected_id reactive
-      cmd = self.get_selected()
-      self.selected_id = cmd.id if cmd else None
+      scroll = self.query_one("#slash-scroll-container")
+      for child in scroll.query(".slash-item"):
+        if child.has_class("selected"):
+          child.remove_class("selected")
+      # Add selected class to current
+      selected = self.query_one(f"#slash-item-{self._selected_idx}")
+      selected.add_class("selected")
     except Exception:
       pass
 
   def _scroll_to_selected(self) -> None:
-    """Scroll the overlay to make the selected item visible."""
+    """Scroll the container so the selected item is visible."""
     try:
-      if self._nav_items and 0 <= self._selected_idx < len(self._nav_items):
-        selected_wid = self._nav_items[self._selected_idx][0]
-        widget = self.query_one(f"#{selected_wid}")
-        widget.scroll_visible()
+      selected_wid = f"slash-item-{self._selected_idx}"
+      widget = self.query_one(f"#{selected_wid}")
+      widget.scroll_visible()
     except Exception:
       pass
 
@@ -543,7 +464,8 @@ class SlashOverlay(Widget):
       self.selected_id = cmd_id
       # Post the selection
       self.post_message(self.CommandSelected(cmd_id, content))
-  # ── Argument dialog support ──────────────────────────────────────────
+
+  # -- Argument dialog support -----------------------------------------------
 
   class ArgumentDialog(Widget):
     """Inline dialog for filling $NAME placeholders in custom commands.
@@ -671,7 +593,6 @@ class SlashOverlay(Widget):
 
       Returns a deduplicated list of argument names (without the $).
       """
-      import re
       matches = re.findall(r"\$([A-Z][A-Z0-9_]*)", content)
       seen: set[str] = set()
       result: list[str] = []
