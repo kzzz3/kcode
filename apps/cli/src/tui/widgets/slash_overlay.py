@@ -37,6 +37,7 @@ class SlashCommand:
   shortcut: str = ""
   is_custom: bool = False
   content: str | None = None  # For custom commands, the template content
+  argument_names: list[str] | None = None  # For custom commands with $ARGUMENT placeholders
 
 
 # -- Built-in command catalogue -----------------------------------------------
@@ -44,7 +45,7 @@ class SlashCommand:
 SLASH_COMMANDS: list[SlashCommand] = [
   # Session
   SlashCommand("new",      "New Session",   "Start a fresh chat session",            "session",  icon="+", shortcut="Ctrl+N"),
-  SlashCommand("compact",  "Compact",       "Compact conversation to save tokens",   "session",  icon="~", shortcut="Ctrl+K"),
+  SlashCommand("compact",  "Compact",       "Compact conversation to save tokens",   "session",  icon="~"),
   SlashCommand("clear",    "Clear Chat",    "Clear the current chat display",        "session",  icon="x", shortcut="Ctrl+L"),
   SlashCommand("sessions", "Sessions",      "List and switch between sessions",      "session",  icon="="),
   SlashCommand("refresh",  "Refresh",       "Reload sessions list",                  "session",  icon="R"),

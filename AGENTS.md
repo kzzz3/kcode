@@ -1,4 +1,4 @@
-﻿# AGENTS.md instructions for F:\Project\kcode
+# AGENTS.md instructions for F:\Project\kcode
 
 <INSTRUCTIONS>
 # KCode — Agent Engineering Guide
@@ -171,7 +171,7 @@ Both methods:
 
 Tools with `safety_class` in `("write", "system", "network")` require approval in interactive mode.
 The approval handler supports two modes:
-- **`ask`** (default): prompt user for each sensitive tool call
+- **`manual`** (default): prompt user for each sensitive tool call
 - **`auto`**: auto-approve all tool calls (for scripted/CI usage)
 
 ---
@@ -275,7 +275,7 @@ class StubStreamingModel:
 - `-w, --workspace <path>` — workspace directory (default: cwd)
 - `-m, --model <name>` — model override
 - `-p, --provider <name>` — provider override
-- `-a, --approval <ask|auto>` — approval mode (default: ask)
+- `-a, --approval <manual|auto>` — approval mode (default: manual)
 - `--max-steps <N>` — max agent loop steps (default: 50)
 
 ---

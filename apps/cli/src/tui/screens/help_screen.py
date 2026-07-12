@@ -32,6 +32,7 @@ Type `/` in the empty input to open the command palette.
 | `/clear` | — | Clear the current chat display |
 | `/sessions` | — | List and switch between sessions |
 | `/refresh` | — | Reload sessions list |
+| `/init` | — | Create / update kcode.workspace.md |
 
 ### View
 | Command | Alias | Description |
