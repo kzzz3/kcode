@@ -1,0 +1,38 @@
+﻿conda : E:\Miniconda3\envs\expr\Lib\site-packages\_pytest\unraisableexception.py:33: RuntimeWarning: coroutine 'McpStdi
+oProvider._read_loop' was never awaited
+At line:2 char:32
++ ... ject\kcode; conda run -n expr python -m pytest --tb=no -q 2>&1 | Out- ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (E:\Miniconda3\e...s never awaited:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  gc.collect()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+
+........................................................................ [ 18%]
+........................................................................ [ 37%]
+........................................................................ [ 56%]
+........................................................................ [ 74%]
+........................................................................ [ 93%]
+.........................                                                [100%]
+============================== warnings summary ===============================
+packages/core/tests/test_mcp_stdio_provider.py::test_discover_tools_empty_list
+  E:\Miniconda3\envs\expr\Lib\unittest\mock.py:2247: RuntimeWarning: coroutine 'McpStdioProvider._read_loop' was never awaited
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+packages/core/tests/test_openai_streaming_paths.py::test_complete_stream_emits_text_chunks
+  E:\Miniconda3\envs\expr\Lib\site-packages\httpcore\_api.py:6: RuntimeWarning: coroutine 'McpStdioProvider._read_loop' was never awaited
+    from ._models import URL, Extensions, HeaderTypes, Response
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+apps/cli/tests/test_cli_config.py::test_config_show_contains_mcp_section
+  E:\Miniconda3\envs\expr\Lib\site-packages\rich\text.py:1141: RuntimeWarning: coroutine 'McpStdioProvider._read_loop' was never awaited
+    _line_appends = [line._spans.append for line in new_lines._lines]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+

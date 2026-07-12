@@ -1,0 +1,19 @@
+﻿conda : E:\Miniconda3\envs\expr\Lib\site-packages\_pytest\unraisableexception.py:33: RuntimeWarning: coroutine 'McpStdi
+oProvider._read_loop' was never awaited
+At line:2 char:32
++ ... ject\kcode; conda run -n expr python -m pytest --tb=no --disable-warn ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (E:\Miniconda3\e...s never awaited:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  gc.collect()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+
+........................................................................ [ 18%]
+........................................................................ [ 37%]
+........................................................................ [ 56%]
+........................................................................ [ 74%]
+........................................................................ [ 93%]
+.........................                                                [100%]
+385 passed, 3 warnings in 34.83s
+
