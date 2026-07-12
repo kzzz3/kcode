@@ -4,17 +4,23 @@ Inspired by OpenCode/Crush command palette: typed '/' opens a non-modal
 overlay that filters in real time, grouped by category with icons, aliases,
 keyboard shortcuts, and rich visual hints. Supports both built-in and
 custom commands from user/project directories.
+
+Visual enhancements:
+  - Two-line rendering: title (bold) + description (muted)
+  - Selected item with primary background highlight
+  - No-results placeholder with hint
+  - Category section headers with icons
+  - Proper overlay positioning with shadow effect
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
 from textual.reactive import reactive
 from textual.widget import Widget
-from textual.widgets import Static, Rule
+from textual.message import Message
+from textual.widgets import Static, Rule, Input
 
 
 @dataclass(frozen=True)
@@ -118,192 +124,250 @@ def group_by_category(
   return result
 
 
-# ── Widget ────────────────────────────────────────────────────────────
+# ── Widget ──────────────────────────────────────────────────────────────
 
 class SlashOverlay(Widget):
-  """Inline dropdown overlay that appears below the input area.
+  """Non-modal inline overlay that appears above the input area.
 
-  Renders category-grouped commands with icons, aliases, descriptions,
-  and keyboard shortcuts. Supports arrow-key navigation, real-time
-  filtering, click/enter/tab confirmation, and custom commands.
+  Shows a filterable, grouped list of slash commands with keyboard
+  navigation, real-time search, and mouse/click support.
   """
 
   DEFAULT_CSS = """
   SlashOverlay {
-    height: 0;
     display: none;
-    overflow: hidden;
-    background: $surface;
-    border: tall $accent;
+    height: auto;
+    max-height: 24;
     margin: 0 1;
+    padding: 0;
+    background: $surface;
+    border: tall $primary;
+    layer: overlay;
+    overflow-y: auto;
   }
 
   SlashOverlay.visible {
-    height: auto;
-    max-height: 24;
     display: block;
   }
 
+  /* ── Header ── */
   #slash-header {
     height: 1;
     padding: 0 1;
     color: $text-muted;
+    background: $primary 20%;
   }
 
+  /* ── Command list container ── */
   #slash-commands {
     height: auto;
+    max-height: 20;
     overflow-y: auto;
-    max-height: 18;
   }
 
-  #slash-empty {
-    height: 1;
-    display: none;
-    padding: 0 1;
-    color: $text-muted;
-    text-style: italic;
-  }
-
-  #slash-footer {
-    height: 1;
-    padding: 0 1;
-    color: $text-muted;
-    text-style: dim;
-  }
-
-  SlashOverlay.no-results #slash-empty {
-    display: block;
-  }
-
+  /* ── Category header ── */
   .slash-category {
     height: 1;
     padding: 0 1;
     color: $accent;
     text-style: bold;
+    background: $primary 10%;
   }
 
+  /* ── Divider ── */
   .slash-divider {
     height: 1;
     margin: 0 1;
   }
 
+  /* ── Command row (two-line: title + description) ── */
   .slash-item {
-    height: 1;
+    height: auto;
+    min-height: 2;
     padding: 0 1;
+    background: transparent;
+  }
+
+  .slash-item:hover {
+    background: $primary 15%;
   }
 
   .slash-item.selected {
-    background: $accent;
-    color: $background;
+    background: $primary 30%;
+  }
+
+  /* Top row: icon + name + alias + shortcut */
+  .slash-item .slash-row-top {
+    height: 1;
+    width: 1fr;
+  }
+
+  /* Bottom row: description */
+  .slash-item .slash-row-bottom {
+    height: 1;
+    width: 1fr;
   }
 
   .slash-icon {
     width: 3;
+    min-width: 3;
     text-align: center;
   }
 
   .slash-name {
-    width: 16;
+    width: 14;
+    min-width: 14;
+    text-style: bold;
     color: $text;
+  }
+
+  .slash-item.selected .slash-name {
+    color: $text;
+    text-style: bold;
   }
 
   .slash-alias {
     width: 6;
-    color: $text-muted;
-    text-style: dim;
-  }
-
-  .slash-desc {
-    width: 1fr;
+    min-width: 6;
     color: $text-muted;
   }
 
   .slash-shortcut {
     width: 10;
+    min-width: 10;
     text-align: right;
     color: $text-muted;
-    text-style: dim;
+  }
+
+  .slash-desc {
+    width: 1fr;
+    color: $text-muted;
+    text-style: italic;
+  }
+
+  .slash-item.selected .slash-desc {
+    color: $text;
   }
 
   .slash-custom-badge {
-    width: 6;
+    width: 7;
+    min-width: 7;
+    text-align: center;
     color: $warning;
+  }
+
+  /* ── No results ── */
+  .slash-no-results {
+    height: 3;
+    padding: 1 2;
+    color: $text-muted;
     text-style: italic;
+    text-align: center;
+  }
+
+  /* ── Argument dialog ── */
+  #arg-dialog {
+    display: none;
+    height: auto;
+    margin: 1 2;
+    padding: 1 2;
+    background: $surface;
+    border: tall $warning;
+  }
+
+  #arg-dialog.visible {
+    display: block;
+  }
+
+  .arg-prompt {
+    height: auto;
+    color: $text;
+    margin-bottom: 1;
+  }
+
+  .arg-input {
+    height: 3;
+    margin: 0;
   }
   """
 
+  DEFAULT_CLASSES = ""
+
+  # ── Reactives ──────────────────────────────────────────────────────
+
   selected_id: reactive[str | None] = reactive(None)
 
-  def __init__(self, commands: list[SlashCommand] | None = None, workspace_root: Path | None = None) -> None:
-    super().__init__()
-    self._commands = commands or list(SLASH_COMMANDS)
-    self._filtered: list[SlashCommand] = list(self._commands)
-    self._selected_idx: int = 0
-    self._nav_items: list[tuple[str, SlashCommand | None]] = []
-    self._workspace_root = workspace_root
+  # ── Messages ───────────────────────────────────────────────────────
 
-    # Load custom commands
-    self._load_custom_commands()
-
-  class CommandSelected:
-    """Posted when user confirms a command (Enter / Tab / click)."""
-    def __init__(self, command_id: str, content: str | None = None) -> None:
+  class CommandSelected(Message):
+    """Posted when user clicks a command item."""
+    def __init__(self, command_id: str, content: str | None) -> None:
       self.command_id = command_id
-      self.content = content  # For custom commands
+      self.content = content
+      super().__init__()
 
-  class Dismissed:
-    """Posted when user cancels the overlay (Escape)."""
-    pass
+  # ── Init ───────────────────────────────────────────────────────────
+
+  def __init__(self, **kwargs) -> None:
+    super().__init__(**kwargs)
+    self._commands: list[SlashCommand] = list(SLASH_COMMANDS)
+    self._filtered: list[SlashCommand] = list(SLASH_COMMANDS)
+    self._selected_idx: int = 0
+    self._nav_items: list[tuple[str, SlashCommand | None]] = []  # (widget_id, cmd_or_none)
 
   def _load_custom_commands(self) -> None:
-    """Load custom commands from user and project directories."""
+    """Load custom commands from user/project dirs."""
     try:
       from apps.cli.src.tui.utils.custom_commands import load_all_custom_commands
-      custom_commands = load_all_custom_commands(self._workspace_root)
-      
-      for cmd in custom_commands:
-        slash_cmd = SlashCommand(
-          id=cmd.id,
-          title=cmd.title,
-          description=cmd.description,
+      from pathlib import Path
+      workspace = Path.cwd()
+      customs = load_all_custom_commands(workspace)
+      custom_slash = [
+        SlashCommand(
+          id=c.id,
+          label=c.title,
+          description=c.description or c.content[:60] if c.content else "",
           category="custom",
-          icon="\u270d",  # ✍
+          icon="\U0001f4dd",
           is_custom=True,
-          content=cmd.content,
+          content=c.content,
         )
-        self._commands.append(slash_cmd)
-      
-      # Update filtered list
+        for c in customs
+      ]
+      self._commands = list(SLASH_COMMANDS) + custom_slash
       self._filtered = list(self._commands)
-    except Exception as e:
-      # Log error but continue with built-in commands only
-      print(f"Warning: Failed to load custom commands: {e}")
+    except Exception:
+      self._commands = list(SLASH_COMMANDS)
+      self._filtered = list(SLASH_COMMANDS)
+
+  # ── Compose ────────────────────────────────────────────────────────
 
   def compose(self) -> ComposeResult:
-    yield Static("Type to filter commands...", id="slash-header")
+    yield Static(f"{len(self._commands)} commands available", id="slash-header")
     with Vertical(id="slash-commands"):
       pass  # Populated dynamically
-    yield Static("  No matching commands found", id="slash-empty")
-    yield Static(
-      " \u2191\u2193 navigate  \u21b5 select  esc cancel  \u2022 type to filter",
-      id="slash-footer",
-    )
+
+  def on_mount(self) -> None:
+    self._load_custom_commands()
+    self._filtered = list(self._commands)
+    self._rebuild_list()
+
+  # ── Public API ─────────────────────────────────────────────────────
 
   def show_overlay(self, query: str = "") -> None:
-    """Show the overlay with optional initial filter."""
-    # Reload custom commands in case they changed
+    """Show the overlay and apply initial filter."""
     self._load_custom_commands()
-    self._update_filter(query)
-    self.visible = True
     self.add_class("visible")
+    self._update_filter(query)
+    # Focus management -- let input area keep focus
+    self.scroll_visible()
 
   def hide_overlay(self) -> None:
     """Hide the overlay."""
-    self.visible = False
     self.remove_class("visible")
 
   def update_filter(self, query: str) -> None:
-    """Update the command filter from external input."""
+    """Update the filter text and rebuild list."""
     self._update_filter(query)
 
   def move_up(self) -> None:
@@ -315,6 +379,7 @@ class SlashOverlay(Widget):
       if self._nav_items[self._selected_idx][1] is not None:
         break
     self._update_selection_visual()
+    self._scroll_to_selected()
 
   def move_down(self) -> None:
     """Move selection down, skipping category headers."""
@@ -325,6 +390,7 @@ class SlashOverlay(Widget):
       if self._nav_items[self._selected_idx][1] is not None:
         break
     self._update_selection_visual()
+    self._scroll_to_selected()
 
   def get_selected(self) -> SlashCommand | None:
     """Return the currently highlighted command, or None."""
@@ -363,14 +429,6 @@ class SlashOverlay(Widget):
     except Exception:
       pass
 
-    # Toggle no-results state
-    if self._filtered:
-      self.remove_class("no-results")
-      self.add_class("has-results")
-    else:
-      self.remove_class("has-results")
-      self.add_class("no-results")
-
   def _rebuild_list(self) -> None:
     """Rebuild the command list from scratch."""
     container = self.query_one("#slash-commands", Vertical)
@@ -380,6 +438,12 @@ class SlashOverlay(Widget):
     self._nav_items = []
 
     if not self._filtered:
+      # Show no-results placeholder
+      no_results = Static(
+        "  No matching commands  \n  Try a different search term",
+        classes="slash-no-results",
+      )
+      container.mount(no_results)
       return
 
     groups = group_by_category(self._filtered)
@@ -403,18 +467,31 @@ class SlashOverlay(Widget):
         self._nav_items.append((widget_id, cmd))
 
   def _make_command_row(self, cmd: SlashCommand, widget_id: str) -> Widget:
-    """Create a single command row widget."""
+    """Create a single command row widget with two-line layout."""
     alias_text = f"/{cmd.alias}" if cmd.alias else ""
     shortcut_text = cmd.shortcut or ""
     custom_badge = "custom" if cmd.is_custom else ""
 
-    row = Horizontal(
+    # Top row: icon + name + alias + shortcut + custom badge
+    top_row = Horizontal(
       Static(f" {cmd.icon}", classes="slash-icon"),
       Static(f"/{cmd.id}", classes="slash-name"),
       Static(alias_text, classes="slash-alias"),
-      Static(cmd.description, classes="slash-desc"),
       Static(shortcut_text, classes="slash-shortcut"),
       Static(custom_badge, classes="slash-custom-badge"),
+      classes="slash-row-top",
+    )
+
+    # Bottom row: description
+    bottom_row = Horizontal(
+      Static("   ", classes="slash-icon"),  # Indent to align with name
+      Static(cmd.description, classes="slash-desc"),
+      classes="slash-row-bottom",
+    )
+
+    row = Vertical(
+      top_row,
+      bottom_row,
       classes="slash-item",
       id=widget_id,
     )
@@ -444,6 +521,16 @@ class SlashOverlay(Widget):
     except Exception:
       pass
 
+  def _scroll_to_selected(self) -> None:
+    """Scroll the overlay to make the selected item visible."""
+    try:
+      if self._nav_items and 0 <= self._selected_idx < len(self._nav_items):
+        selected_wid = self._nav_items[self._selected_idx][0]
+        widget = self.query_one(f"#{selected_wid}")
+        widget.scroll_visible()
+    except Exception:
+      pass
+
   def on_click(self, event) -> None:
     """Handle clicks on command items."""
     # Walk up from the click target to find a .slash-item
@@ -456,3 +543,148 @@ class SlashOverlay(Widget):
       self.selected_id = cmd_id
       # Post the selection
       self.post_message(self.CommandSelected(cmd_id, content))
+  # ── Argument dialog support ──────────────────────────────────────────
+
+  class ArgumentDialog(Widget):
+    """Inline dialog for filling $NAME placeholders in custom commands.
+
+    Shows an Input widget for each argument. Tab cycles between fields,
+    Enter submits all values, Escape cancels.
+    """
+
+    DEFAULT_CSS = """
+    ArgumentDialog {
+      display: none;
+      height: auto;
+      margin: 1 2;
+      padding: 1 2;
+      background: $surface;
+      border: tall $warning;
+    }
+
+    ArgumentDialog.visible {
+      display: block;
+    }
+
+    .arg-title {
+      height: 1;
+      color: $text;
+      text-style: bold;
+      margin-bottom: 1;
+    }
+
+    .arg-field {
+      height: auto;
+      margin-bottom: 0;
+    }
+
+    .arg-label {
+      height: 1;
+      width: 16;
+      color: $accent;
+      text-style: bold;
+      content-align: left middle;
+    }
+
+    .arg-input {
+      height: 3;
+      margin: 0;
+    }
+
+    .arg-hint {
+      height: 1;
+      color: $text-muted;
+      text-style: dim;
+      margin-top: 1;
+    }
+    """
+
+    class ArgsSubmitted(Message):
+      """Posted when user fills all arguments and confirms."""
+      def __init__(self, command_id: str, args: dict[str, str]) -> None:
+        self.command_id = command_id
+        self.args = args
+        super().__init__()
+
+    class Cancelled(Message):
+      """Posted when user cancels the argument dialog."""
+      pass
+
+    def __init__(self, command_id: str, arg_names: list[str], **kwargs) -> None:
+      super().__init__(**kwargs)
+      self._command_id = command_id
+      self._arg_names = arg_names
+      self._current_idx: int = 0
+
+    def compose(self) -> ComposeResult:
+      yield Static(f"  Command: /{self._command_id}", classes="arg-title")
+      for name in self._arg_names:
+        with Horizontal(classes="arg-field"):
+          yield Static(f"  ${name}:", classes="arg-label")
+          yield Input(placeholder=f"Enter ${name}...", id=f"arg-{name}", classes="arg-input")
+      yield Static("  Tab: next field  Enter: submit  Escape: cancel", classes="arg-hint")
+
+    def on_mount(self) -> None:
+      """Focus the first input field."""
+      if self._arg_names:
+        first = self.query_one(f"#arg-{self._arg_names[0]}", Input)
+        first.focus()
+
+    def on_key(self, event) -> None:
+      if event.key == "escape":
+        event.prevent_default()
+        self.post_message(self.Cancelled())
+        return
+      if event.key == "enter":
+        event.prevent_default()
+        self._submit()
+        return
+      if event.key == "tab":
+        event.prevent_default()
+        self._cycle_field(1)
+        return
+
+    def _cycle_field(self, direction: int) -> None:
+      """Move focus to the next/previous input field."""
+      self._current_idx = (self._current_idx + direction) % len(self._arg_names)
+      name = self._arg_names[self._current_idx]
+      try:
+        inp = self.query_one(f"#arg-{name}", Input)
+        inp.focus()
+      except Exception:
+        pass
+
+    def _submit(self) -> None:
+      """Collect all input values and post ArgsSubmitted."""
+      args: dict[str, str] = {}
+      for name in self._arg_names:
+        try:
+          inp = self.query_one(f"#arg-{name}", Input)
+          args[name] = inp.value
+        except Exception:
+          args[name] = ""
+      self.post_message(self.ArgsSubmitted(self._command_id, args))
+
+    @staticmethod
+    def extract_placeholders(content: str) -> list[str]:
+      """Extract $NAME placeholders from command content.
+
+      Returns a deduplicated list of argument names (without the $).
+      """
+      import re
+      matches = re.findall(r"\$([A-Z][A-Z0-9_]*)", content)
+      seen: set[str] = set()
+      result: list[str] = []
+      for m in matches:
+        if m not in seen:
+          seen.add(m)
+          result.append(m)
+      return result
+
+    @staticmethod
+    def apply_arguments(content: str, args: dict[str, str]) -> str:
+      """Replace $NAME placeholders with user-provided values."""
+      result = content
+      for name, value in args.items():
+        result = result.replace(f"${name}", value)
+      return result

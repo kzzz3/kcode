@@ -5,6 +5,8 @@ Design notes:
   - '/' at start opens the slash overlay automatically
   - Placeholder text when empty
   - All slash interaction delegated to MainScreen via messages
+  - Ctrl+K opens command palette (any time, not just empty input)
+  - Real-time filter updates as user types after '/'
 """
 from __future__ import annotations
 
@@ -18,6 +20,7 @@ class InputArea(TextArea):
   Behaviour:
     * Empty input shows a dim placeholder hint.
     * Typing '/' at the start (or after only whitespace) opens the slash overlay.
+    * Ctrl+K opens command palette regardless of input state.
     * While the overlay is open, continued typing updates the filter in real time.
     * Arrow keys navigate, Tab / Enter confirms, Esc dismisses.
     * Enter (with overlay closed) submits the message.
@@ -35,7 +38,7 @@ class InputArea(TextArea):
   }
   """
 
-  PLACEHOLDER = "Type a message... (/ for commands)"
+  PLACEHOLDER = "Type a message... (/ for commands, Ctrl+K palette)"
 
   # ── Messages ───────────────────────────────────────────────────────
 
@@ -80,6 +83,7 @@ class InputArea(TextArea):
   def __init__(self, **kwargs) -> None:
     super().__init__(**kwargs)
     self._slash_active: bool = False
+    self._palette_mode: bool = False  # True when opened via Ctrl+K
 
   # ── Change tracking for live filter ────────────────────────────────
 
@@ -88,9 +92,14 @@ class InputArea(TextArea):
     if not self._slash_active:
       return
     text = self.text
+    if self._palette_mode:
+      # In palette mode, any text is the filter (no leading /)
+      self.post_message(self.UpdateSlashFilter(text))
+      return
     if not text.startswith("/"):
       # User deleted the slash -- dismiss
       self._slash_active = False
+      self._palette_mode = False
       self.post_message(self.DismissSlash())
       return
     # Send the full slash text (e.g. "/mod") as the filter query
@@ -100,6 +109,20 @@ class InputArea(TextArea):
 
   def on_key(self, event) -> None:
     key = event.key
+
+    # --- Ctrl+K: open command palette at any time ---
+    if key == "ctrl+k":
+      event.prevent_default()
+      if self._slash_active:
+        # Already open -- close it
+        self._slash_active = False
+        self._palette_mode = False
+        self.post_message(self.DismissSlash())
+      else:
+        self._palette_mode = True
+        self._slash_active = True
+        self.post_message(self.OpenSlashOverlay(""))
+      return
 
     # --- Slash overlay navigation ---
     if self._slash_active:
@@ -123,13 +146,15 @@ class InputArea(TextArea):
       if key == "escape":
         event.prevent_default()
         self._slash_active = False
+        self._palette_mode = False
         self.post_message(self.DismissSlash())
         return
 
-    # --- Open overlay on '/' ---
+    # --- Open overlay on '/' at start of input ---
     if key == "slash" and self._should_open_slash():
       event.prevent_default()
       self._slash_active = True
+      self._palette_mode = False
       # Insert the slash so the user can see it
       self.insert("/")
       self.post_message(self.OpenSlashOverlay("/"))
@@ -158,10 +183,24 @@ class InputArea(TextArea):
   def deactivate_slash_overlay(self) -> None:
     """Called by MainScreen when overlay is dismissed or command selected."""
     self._slash_active = False
+    self._palette_mode = False
 
   def clear_slash_text(self) -> None:
     """Remove the slash + filter text from the input after a command is selected."""
+    if self._palette_mode:
+      # Don't clear user text in palette mode -- they may have been typing
+      return
     self.clear()
+
+  @property
+  def is_slash_active(self) -> bool:
+    """Whether the slash overlay is currently active."""
+    return self._slash_active
+
+  @property
+  def is_palette_mode(self) -> bool:
+    """Whether we're in Ctrl+K palette mode (vs slash mode)."""
+    return self._palette_mode
 
   # ── Internals ──────────────────────────────────────────────────────
 

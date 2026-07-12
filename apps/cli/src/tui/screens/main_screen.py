@@ -111,13 +111,65 @@ class MainScreen(Screen):
   def on_input_area_confirm_slash(self, event: InputArea.ConfirmSlash) -> None:
     """Tab or Enter while overlay is open -- confirm the selected command."""
     overlay = self.query_one(SlashOverlay)
-    cmd_id = overlay.confirm_selection()
+    cmd_id, content = overlay.confirm_selection()
     overlay.hide_overlay()
     input_area = self.query_one(InputArea)
     input_area.deactivate_slash_overlay()
     input_area.clear_slash_text()
     if cmd_id:
-      self._run_command(cmd_id)
+      self._dispatch_command(cmd_id, content)
+
+  def _dispatch_command(self, cmd_id: str, content: str | None) -> None:
+    """Dispatch a command, showing argument dialog if placeholders are present."""
+    if content:
+      placeholders = SlashOverlay.ArgumentDialog.extract_placeholders(content)
+      if placeholders:
+        self._show_argument_dialog(cmd_id, content, placeholders)
+        return
+    self._run_command(cmd_id, content=content)
+
+  def _show_argument_dialog(
+    self, cmd_id: str, content: str, arg_names: list[str]
+  ) -> None:
+    """Show inline argument dialog for $NAME placeholders."""
+    # Remove any existing dialog first
+    try:
+      old = self.query_one("#arg-dialog")
+      old.remove()
+    except Exception:
+      pass
+    new_dialog = SlashOverlay.ArgumentDialog(cmd_id, arg_names, id="arg-dialog")
+    new_dialog._template_content = content
+    container = self.query_one("#chat-container")
+    container.mount(new_dialog)
+    new_dialog.add_class("visible")
+    new_dialog.focus()
+
+  def on_argument_dialog_args_submitted(
+    self, event: SlashOverlay.ArgumentDialog.ArgsSubmitted
+  ) -> None:
+    """User filled in arguments -- apply and execute."""
+    template = None
+    try:
+      dialog = self.query_one("#arg-dialog", SlashOverlay.ArgumentDialog)
+      template = getattr(dialog, "_template_content", None)
+      dialog.remove()
+    except Exception:
+      pass
+    if template:
+      resolved = SlashOverlay.ArgumentDialog.apply_arguments(template, event.args)
+      self._run_command(event.command_id, content=resolved)
+
+  def on_argument_dialog_cancelled(
+    self, event: SlashOverlay.ArgumentDialog.Cancelled
+  ) -> None:
+    """User cancelled the argument dialog."""
+    try:
+      dialog = self.query_one("#arg-dialog", SlashOverlay.ArgumentDialog)
+      dialog.remove()
+    except Exception:
+      pass
+    self.notify("Command cancelled.", severity="information")
 
   def on_input_area_dismiss_slash(self, event: InputArea.DismissSlash) -> None:
     """Escape while overlay is open -- dismiss it."""
@@ -133,7 +185,7 @@ class MainScreen(Screen):
     input_area = self.query_one(InputArea)
     input_area.deactivate_slash_overlay()
     input_area.clear_slash_text()
-    self._run_command(event.command_id, content=event.content)
+    self._dispatch_command(event.command_id, event.content)
 
   # ─── Text submission ────────────────────────────────────────────────
 
@@ -440,12 +492,17 @@ class MainScreen(Screen):
     self._show_help()
 
   def action_command_palette(self) -> None:
-    """Ctrl+K -- open the slash overlay as a command palette."""
+    """Ctrl+K -- open the slash overlay as a command palette.
+
+    Note: Ctrl+K is now handled directly by InputArea which sets
+    palette_mode=True. This action is kept for programmatic use.
+    """
     input_area = self.query_one(InputArea)
     input_area.focus()
-    input_area.insert("/")
+    # InputArea.on_key handles Ctrl+K directly now
+    # This method is a fallback for programmatic invocation
     overlay = self.query_one(SlashOverlay)
-    overlay.show_overlay("/")
+    overlay.show_overlay("")
     input_area.activate_slash_overlay()
 
   def action_compact(self) -> None:

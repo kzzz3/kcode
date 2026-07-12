@@ -125,3 +125,69 @@ class TestCategoryMeta:
     meta_keys = {key for key, _, _ in CATEGORY_META}
     for cat in categories:
       assert cat in meta_keys, f"Missing meta for category: {cat}"
+
+class TestArgumentDialog:
+  """Tests for SlashOverlay.ArgumentDialog static methods."""
+
+  def test_extract_placeholders_basic(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.extract_placeholders("Hello $NAME!")
+    assert result == ["NAME"]
+
+  def test_extract_placeholders_multiple(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.extract_placeholders(
+      "Project $PROJECT in $DIR"
+    )
+    assert result == ["PROJECT", "DIR"]
+
+  def test_extract_placeholders_dedup(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.extract_placeholders("$A and $A")
+    assert result == ["A"]
+
+  def test_extract_placeholders_none(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.extract_placeholders("No placeholders")
+    assert result == []
+
+  def test_extract_placeholders_uppercase_only(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.extract_placeholders("$lower $UPPER")
+    assert result == ["UPPER"]
+
+  def test_extract_placeholders_with_digits(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.extract_placeholders("$NAME2 test")
+    assert result == ["NAME2"]
+
+  def test_apply_arguments_single(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.apply_arguments(
+      "Hello $NAME!", {"NAME": "World"}
+    )
+    assert result == "Hello World!"
+
+  def test_apply_arguments_multiple(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.apply_arguments(
+      "$A + $B", {"A": "1", "B": "2"}
+    )
+    assert result == "1 + 2"
+
+  def test_apply_arguments_none(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    result = SlashOverlay.ArgumentDialog.apply_arguments(
+      "No args here", {}
+    )
+    assert result == "No args here"
+
+  def test_extract_and_apply_roundtrip(self) -> None:
+    from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+    template = "Write a $LANG function for $TASK"
+    names = SlashOverlay.ArgumentDialog.extract_placeholders(template)
+    assert names == ["LANG", "TASK"]
+    result = SlashOverlay.ArgumentDialog.apply_arguments(
+      template, {"LANG": "Python", "TASK": "sorting"}
+    )
+    assert result == "Write a Python function for sorting"
