@@ -1,0 +1,1 @@
+"""KCode CLI namespace."""

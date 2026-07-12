@@ -1,0 +1,5 @@
+﻿include LICENSE
+include README.md
+recursive-include apps *.py
+recursive-include packages *.py
+recursive-include docs *.md
