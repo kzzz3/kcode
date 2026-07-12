@@ -121,7 +121,7 @@ def _parse_command_file(
     return None
 
   try:
-    content = file_path.read_text(encoding="utf-8").strip()
+    content = file_path.read_text(encoding="utf-8").lstrip("\ufeff").strip()
   except UnicodeDecodeError:
     try:
       content = file_path.read_text(encoding="utf-8-sig").strip()

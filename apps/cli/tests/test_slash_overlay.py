@@ -126,6 +126,21 @@ class TestCategoryMeta:
     for cat in categories:
       assert cat in meta_keys, f"Missing meta for category: {cat}"
 
+
+
+class TestCustomCommandInjection:
+    def test_set_custom_commands_adds_items(self) -> None:
+        from apps.cli.src.tui.widgets.slash_overlay import SlashOverlay
+        overlay = SlashOverlay()
+        custom = [SlashCommand("user:review", "Review", "Run review", category="Custom", icon="#", is_custom=True)]
+        overlay.set_custom_commands(custom)
+        assert any(c.id == "user:review" for c in overlay._commands)
+
+
+class TestIconAscii:
+    def test_all_icons_ascii(self) -> None:
+        for cmd in SLASH_COMMANDS:
+            assert cmd.icon.isascii(), f"{cmd.id} icon not ASCII"
 class TestArgumentDialog:
   """Tests for SlashOverlay.ArgumentDialog static methods."""
 

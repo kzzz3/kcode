@@ -61,6 +61,29 @@ class TestCustomCommandParsing:
         (tmp_path / "fix.md").write_text("# Fix\nFix $ISSUE_ID", encoding="utf-8")
         cmds = _load_commands_from_dir(tmp_path, "user")
         assert isinstance(cmds[0].argument_names, list)
+
+
+    def test_file_path_populated(self, tmp_path: Path) -> None:
+        md = "# Review\nCheck changes"
+        p = tmp_path / "review.md"
+        p.write_text(md, encoding="utf-8")
+        cmds = _load_commands_from_dir(tmp_path, "user")
+        assert cmds[0].file_path == p
+
+    def test_utf8_sig_encoding_fallback(self, tmp_path: Path) -> None:
+        md = "# Review\nCheck changes"
+        p = tmp_path / "review.md"
+        p.write_bytes(md.encode("utf-8-sig"))
+        cmds = _load_commands_from_dir(tmp_path, "user")
+        assert len(cmds) == 1
+        assert cmds[0].title == "Review"
+
+    def test_argument_names_are_list_instances(self, tmp_path: Path) -> None:
+        md = "# Fix\nFix $ISSUE_ID in $PROJECT"
+        (tmp_path / "fix.md").write_text(md, encoding="utf-8")
+        cmds = _load_commands_from_dir(tmp_path, "user")
+        assert isinstance(cmds[0].argument_names, list)
+        assert cmds[0].argument_names == ["ISSUE_ID", "PROJECT"]
     def test_combined(self, tmp_path: Path) -> None:
         user_dir = tmp_path / "user_cmds"
         user_dir.mkdir()
