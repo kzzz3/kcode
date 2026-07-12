@@ -1,9 +1,11 @@
-"""KCode CLI application entrypoint."""
+﻿"""KCode CLI application entrypoint."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
+from typing_extensions import Annotated
 
 from apps.cli.src.commands import config as config_cmd
 from apps.cli.src.commands import doctor as doctor_cmd
@@ -11,7 +13,11 @@ from apps.cli.src.commands.chat import run_chat
 from apps.cli.src.commands.init import run_init
 from apps.cli.src.commands.models import run_models
 
-app = typer.Typer(add_completion=False, help="KCode CLI coding agent.")
+app = typer.Typer(
+    add_completion=False,
+    invoke_without_command=True,
+    help="KCode — AI coding agent. Runs TUI by default.",
+)
 app.add_typer(config_cmd.app, name="config", help="Inspect and validate configuration.")
 app.command(name="init")(run_init)
 app.command(name="doctor")(doctor_cmd.run_doctor)
@@ -27,15 +33,24 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def main(
-    version: bool = typer.Option(False, "--version", "-v", is_eager=True, help="Show version and exit.", callback=_version_callback),
-    debug: bool = typer.Option(False, "--debug", help="Enable debug logging."),
-    workspace: Path | None = typer.Option(None, "--workspace", "-w", help="Workspace root override."),
+    version: Annotated[bool, typer.Option("--version", "-v", is_eager=True, help="Show version and exit.", callback=_version_callback)] = False,
+    debug: Annotated[bool, typer.Option("--debug", help="Enable debug logging.")] = False,
+    workspace: Annotated[Path | None, typer.Option("--workspace", "-w", help="Workspace root override.")] = None,
+    ctx: typer.Context = typer.Context,
 ) -> None:
-    """Global CLI options."""
-    return
-@app.command()
-def tui() -> None:
-    """Launch the Terminal User Interface."""
+    """KCode — AI coding agent. Launches TUI when no subcommand is given."""
+    if ctx.invoked_subcommand is None:
+        _launch_tui()
+
+
+@app.command(name="tui", hidden=True)
+def tui_cmd() -> None:
+    """Launch the Terminal User Interface (default)."""
+    _launch_tui()
+
+
+def _launch_tui() -> None:
+    """Start the Textual TUI."""
     from .tui.app import KCodeTUI
-    app = KCodeTUI()
-    app.run()
+    application = KCodeTUI()
+    application.run()
