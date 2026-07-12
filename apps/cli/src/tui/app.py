@@ -1,4 +1,4 @@
-﻿"""KCode Terminal User Interface — Textual application shell."""
+﻿"""KCode Terminal User Interface -- Textual application shell."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -28,6 +28,7 @@ class KCodeTUI(App):
   BINDINGS = [
     Binding("ctrl+c", "quit", "Quit"),
     Binding("ctrl+n", "new_session", "New Session", show=True),
+    Binding("ctrl+l", "clear_chat", "Clear Chat", show=True),
     Binding("ctrl+q", "quit", "Quit", show=False),
   ]
 
@@ -83,3 +84,8 @@ class KCodeTUI(App):
     if isinstance(screen, MainScreen):
       screen.action_new_session()
 
+  def action_clear_chat(self) -> None:
+    """Forward clear-chat to the active MainScreen."""
+    screen = self.screen
+    if isinstance(screen, MainScreen):
+      screen.action_clear_chat()

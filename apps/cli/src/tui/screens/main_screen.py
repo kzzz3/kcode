@@ -1,7 +1,7 @@
-﻿"""Main TUI screen — layout, streaming, tool approval, session management."""
+﻿"""Main TUI screen -- layout, streaming, tool approval, session management."""
 from __future__ import annotations
 
-
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -19,6 +19,8 @@ from ..widgets.session_panel import SessionPanel
 from ..widgets.approval_dialog import ApprovalDialog
 
 from .command_palette import CommandPalette
+from .model_picker import ModelPicker
+from .help_screen import HelpScreen
 
 
 class MainScreen(Screen):
@@ -44,6 +46,7 @@ class MainScreen(Screen):
 
   BINDINGS = [
     ("ctrl+n", "new_session", "New Session"),
+    ("ctrl+l", "clear_chat", "Clear Chat"),
     ("ctrl+q", "quit", "Quit"),
   ]
 
@@ -66,9 +69,11 @@ class MainScreen(Screen):
   def on_mount(self) -> None:
     """Initialize status bar with model info and load sessions."""
     status = self.query_one(StatusBar)
+    approval = self._runtime._config.approval_mode
     status.update_status(
       model_name=self._runtime._model_name,
       state="IDLE",
+      approval_mode=approval if isinstance(approval, str) else approval.value,
     )
     self._refresh_sessions()
 
@@ -85,14 +90,26 @@ class MainScreen(Screen):
   def on_input_area_submitted(self, event: InputArea.Submitted) -> None:
     """Handle user message submission."""
     if self._is_streaming:
-      self.notify("Agent is busy — wait for it to finish.", severity="warning")
+      self.notify("Agent is busy -- wait for it to finish.", severity="warning")
       return
 
     chat = self.query_one(ChatArea)
     chat.add_message(event.value, "user")
     self.run_worker(self._stream_worker(event.value), exclusive=True)
 
-  # --- Streaming (runs in worker thread) ---
+  def on_input_area_cancel_requested(self, event: InputArea.CancelRequested) -> None:
+    """Handle Escape key -- cancel streaming if active."""
+    if self._is_streaming:
+      chat = self.query_one(ChatArea)
+      chat.cancel_stream()
+      chat.add_message("Cancelled.", "system")
+      status = self.query_one(StatusBar)
+      status.update_status(state="IDLE")
+      self._is_streaming = False
+      self.notify("Streaming cancelled")
+    # If not streaming, Escape is a no-op (modals handle their own Escape)
+
+  # --- Streaming ---
 
   async def _stream_worker(self, user_input: str) -> None:
     """Stream agent response in a background worker."""
@@ -129,10 +146,9 @@ class MainScreen(Screen):
           status.update_status(state="TOOL_RUNNING")
 
         elif chunk.type == ChunkType.TOOL_CALL_ARGS:
-          pass  # Args accumulated by runtime; not displayed raw
+          pass
 
         elif chunk.type == ChunkType.TOOL_CALL_END:
-          # Only show tool result when delta is non-empty (i.e. after execution)
           if chunk.delta:
             chat.add_tool_call_end(
               tool_name=chunk.tool_name or "tool",
@@ -140,7 +156,6 @@ class MainScreen(Screen):
               result=chunk.delta,
               is_error=chunk.delta.startswith("Tool error"),
             )
-            # Restart stream buffer for next model turn
             chat.start_stream("assistant")
             status.update_status(state="THINKING")
 
@@ -151,7 +166,7 @@ class MainScreen(Screen):
           status.update_status(tokens=prompt_tok + comp_tok)
 
         elif chunk.type == ChunkType.DONE:
-          pass  # Handled by AgentSnapshot
+          pass
 
     except Exception as exc:
       chat.add_message(f"Error: {exc}", "system")
@@ -179,7 +194,7 @@ class MainScreen(Screen):
         (s.id, s.title) for s in sessions
       ])
     except Exception:
-      pass  # Non-critical
+      pass
 
   def on_session_panel_new_session(self, event: SessionPanel.NewSession) -> None:
     """Handle new session request."""
@@ -190,7 +205,7 @@ class MainScreen(Screen):
     self.notify("New session created")
 
   def on_session_panel_session_selected(self, event: SessionPanel.SessionSelected) -> None:
-    """Handle session selection — reload conversation history."""
+    """Handle session selection -- reload conversation history."""
     store = self._runtime._session_store
     session = store.get_session(event.session_id)
     if not session:
@@ -226,13 +241,18 @@ class MainScreen(Screen):
     """Handle refresh request."""
     self._refresh_sessions()
 
-  # --- Actions ---
+  # --- Slash command execution ---
+
   def _run_command_choice(self, choice: str) -> None:
     """Execute a command selected from the palette."""
     mapping = {
       "new_session": self.action_new_session,
       "refresh_sessions": self._refresh_sessions,
       "toggle_sidebar": self._toggle_sidebar,
+      "clear": self.action_clear_chat,
+      "model": self._open_model_picker,
+      "approval": self._toggle_approval,
+      "help": self._show_help,
       "quit": self.action_quit,
     }
     action = mapping.get(choice)
@@ -244,10 +264,57 @@ class MainScreen(Screen):
     sidebar = self.query_one("#sidebar")
     sidebar.display = not sidebar.display
 
+  def action_clear_chat(self) -> None:
+    """Clear the chat display."""
+    chat = self.query_one(ChatArea)
+    chat.clear()
+    self.notify("Chat cleared")
+
+  def _open_model_picker(self) -> None:
+    """Open the model picker modal."""
+    async def _run() -> None:
+      current = self._runtime._model_name
+      models = self._list_available_models()
+      chosen = await self.app.push_screen_wait(ModelPicker(models, current))
+      if chosen and chosen != current:
+        self._runtime._model_name = chosen
+        status = self.query_one(StatusBar)
+        status.update_status(model_name=chosen)
+        self.notify(f"Model: {chosen}")
+    self.run_worker(_run())
+
+  def _list_available_models(self) -> list[str]:
+    """Return list of available model names."""
+    try:
+      from apps.cli.src.config.resolution import resolve_config
+      config = resolve_config(Path.cwd())
+      models = config.model.extra.get("models", [])
+      if isinstance(models, list) and models:
+        return [str(m) for m in models]
+    except Exception:
+      pass
+    current = self._runtime._model_name
+    return [current] if current else ["gpt-4o"]
+
+  def _toggle_approval(self) -> None:
+    """Toggle between ask and auto approval mode."""
+    current = self._runtime._config.approval_mode
+    current_str = current if isinstance(current, str) else current.value
+    new_mode = "manual" if current_str == "auto" else "auto"
+    from packages.core.src.config.loader import ApprovalMode
+    self._runtime._config.approval_mode = ApprovalMode(new_mode)
+    status = self.query_one(StatusBar)
+    status.update_status(approval_mode=new_mode)
+    self.notify(f"Approval mode: {new_mode}")
+
+  def _show_help(self) -> None:
+    """Show the help screen."""
+    self.app.push_screen(HelpScreen())
+
+  # --- Actions ---
 
   def action_new_session(self) -> None:
     self.on_session_panel_new_session(SessionPanel.NewSession())
 
   def action_quit(self) -> None:
     self.app.exit()
-

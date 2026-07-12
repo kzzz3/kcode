@@ -23,18 +23,20 @@ class StatusBar(Static):
   cost: reactive[float] = reactive(0.0)
   context_utilization: reactive[float] = reactive(0.0)
   model_name: reactive[str] = reactive("")
+  approval_mode: reactive[str] = reactive("auto")
 
   def render(self) -> str:
     parts: list[str] = []
     parts.append(f"State: {self.state}")
+    if self.model_name:
+      parts.append(f"Model: {self.model_name}")
+    parts.append(f"Approval: {self.approval_mode}")
     if self.tokens > 0:
       parts.append(f"Tokens: {self.tokens:,}")
     if self.cost > 0:
       parts.append(f"Cost: ${self.cost:.4f}")
     if self.context_utilization > 0:
       parts.append(f"Ctx: {self.context_utilization:.0%}")
-    if self.model_name:
-      parts.append(f"Model: {self.model_name}")
     return " | ".join(parts)
 
   def update_status(
@@ -45,6 +47,7 @@ class StatusBar(Static):
     cost: float | None = None,
     context_utilization: float | None = None,
     model_name: str | None = None,
+    approval_mode: str | None = None,
   ) -> None:
     """Update one or more status fields."""
     if state is not None:
@@ -57,3 +60,5 @@ class StatusBar(Static):
       self.context_utilization = context_utilization
     if model_name is not None:
       self.model_name = model_name
+    if approval_mode is not None:
+      self.approval_mode = approval_mode

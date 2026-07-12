@@ -1,4 +1,4 @@
-﻿"""User input area with Enter-to-submit, Shift+Enter for newline."""
+﻿"""User input area with Enter-to-submit, Shift+Enter for newline, / for palette."""
 from __future__ import annotations
 
 from textual.widgets import TextArea
@@ -28,8 +28,12 @@ class InputArea(TextArea):
       self.value = value
       super().__init__()
 
+  class CancelRequested(Message):
+    """Emitted when the user presses Escape to cancel streaming."""
+    pass
+
   def on_key(self, event) -> None:
-    """Slash opens palette; Enter submits; Shift+Enter inserts newline."""
+    """Slash opens palette; Enter submits; Shift+Enter inserts newline; Escape cancels."""
     if event.key == "slash" and not self.text:
       event.prevent_default()
       self.post_message(self.OpenCommandPalette())
@@ -41,3 +45,8 @@ class InputArea(TextArea):
       if text:
         self.post_message(self.Submitted(text))
         self.clear()
+      return
+
+    if event.key == "escape":
+      event.prevent_default()
+      self.post_message(self.CancelRequested())

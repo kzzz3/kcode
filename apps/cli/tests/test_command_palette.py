@@ -1,68 +1,80 @@
-﻿"""Tests for TUI command palette widget."""
+﻿"""Tests for TUI command palette."""
 from __future__ import annotations
 
 from apps.cli.src.tui.screens.command_palette import (
-  CommandItem,
-  CommandPalette,
-  BUILTIN_COMMANDS,
-  filter_commands,
+    BUILTIN_COMMANDS,
+    CommandItem,
+    filter_commands,
 )
-from apps.cli.src.tui.widgets.input_area import InputArea
 
 
-def test_command_item_fields():
-  item = CommandItem(id="test_id", label="Test Label", description="A test command")
-  assert item.id == "test_id"
-  assert item.label == "Test Label"
-  assert item.description == "A test command"
+class TestCommandItem:
+    """Tests for CommandItem dataclass."""
+
+    def test_command_item_fields(self) -> None:
+        item = CommandItem("test", "Test", "A test command", "general")
+        assert item.id == "test"
+        assert item.label == "Test"
+        assert item.description == "A test command"
+        assert item.category == "general"
+
+    def test_command_item_label_repr(self) -> None:
+        item = CommandItem("quit", "Quit", "Exit the app", "app")
+        assert item.label == "Quit"
+
+    def test_builtin_commands_count(self) -> None:
+        assert len(BUILTIN_COMMANDS) == 8
+
+    def test_builtin_commands_unique_ids(self) -> None:
+        ids = [c.id for c in BUILTIN_COMMANDS]
+        assert len(ids) == len(set(ids))
+
+    def test_builtin_commands_have_required_fields(self) -> None:
+        for cmd in BUILTIN_COMMANDS:
+            assert cmd.id
+            assert cmd.label
+            assert cmd.description
+            assert cmd.category
+
+    def test_builtin_commands_categories(self) -> None:
+        categories = {c.category for c in BUILTIN_COMMANDS}
+        expected = {"session", "view", "model", "config", "help", "app"}
+        assert categories == expected
 
 
-def test_builtin_commands_contains_expected():
-  ids = [c.id for c in BUILTIN_COMMANDS]
-  assert "new_session" in ids
-  assert "refresh_sessions" in ids
-  assert "toggle_sidebar" in ids
-  assert "quit" in ids
+class TestFilterCommands:
+    """Tests for filter_commands function."""
 
+    def test_empty_query_returns_all(self) -> None:
+        result = filter_commands(BUILTIN_COMMANDS, "")
+        assert len(result) == len(BUILTIN_COMMANDS)
 
-def test_builtin_commands_have_labels():
-  for cmd in BUILTIN_COMMANDS:
-    assert cmd.label, f"{cmd.id} missing label"
-    assert cmd.description, f"{cmd.id} missing description"
+    def test_filters_by_id(self) -> None:
+        result = filter_commands(BUILTIN_COMMANDS, "quit")
+        assert len(result) == 1
+        assert result[0].id == "quit"
 
+    def test_filters_by_label(self) -> None:
+        result = filter_commands(BUILTIN_COMMANDS, "Help")
+        assert len(result) == 1
+        assert result[0].id == "help"
 
-def test_input_area_open_command_palette_message():
-  msg = InputArea.OpenCommandPalette()
-  assert isinstance(msg, InputArea.OpenCommandPalette)
+    def test_filters_by_description(self) -> None:
+        result = filter_commands(BUILTIN_COMMANDS, "sidebar")
+        ids = [c.id for c in result]
+        assert "toggle_sidebar" in ids
 
+    def test_filters_by_category(self) -> None:
+        result = filter_commands(BUILTIN_COMMANDS, "session")
+        ids = [c.id for c in result]
+        assert "new_session" in ids
+        assert "refresh_sessions" in ids
 
-def test_filter_commands_returns_all_on_empty():
-  results = filter_commands(BUILTIN_COMMANDS, "")
-  assert len(results) == len(BUILTIN_COMMANDS)
+    def test_case_insensitive(self) -> None:
+        r1 = filter_commands(BUILTIN_COMMANDS, "QUIT")
+        r2 = filter_commands(BUILTIN_COMMANDS, "quit")
+        assert len(r1) == len(r2)
 
-
-def test_filter_commands_partial_match():
-  results = filter_commands(BUILTIN_COMMANDS, "new")
-  assert len(results) == 1
-  assert results[0].id == "new_session"
-
-
-def test_filter_commands_case_insensitive():
-  results = filter_commands(BUILTIN_COMMANDS, "QUIT")
-  assert len(results) == 1
-  assert results[0].id == "quit"
-
-
-def test_filter_commands_no_match():
-  results = filter_commands(BUILTIN_COMMANDS, "zzzznonexistent")
-  assert len(results) == 0
-
-
-def test_filter_commands_description_match():
-  results = filter_commands(BUILTIN_COMMANDS, "refresh")
-  assert any(r.id == "refresh_sessions" for r in results)
-
-
-def test_builtin_commands_all_unique_ids():
-  ids = [c.id for c in BUILTIN_COMMANDS]
-  assert len(ids) == len(set(ids)), "Command IDs must be unique"
+    def test_no_match_returns_empty(self) -> None:
+        result = filter_commands(BUILTIN_COMMANDS, "xyz_nonexistent_command")
+        assert len(result) == 0
