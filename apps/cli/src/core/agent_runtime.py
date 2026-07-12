@@ -372,3 +372,4 @@ class CliAgentRuntime(AgentRuntime):
     self._state = AgentState.FAILED
     self._append_message(Message(role="assistant", content="Agent stopped after reaching max steps."))
     yield self.get_snapshot()
+

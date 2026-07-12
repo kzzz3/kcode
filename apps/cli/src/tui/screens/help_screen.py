@@ -1,37 +1,74 @@
-﻿"""Help modal for TUI."""
+"""Help modal for TUI -- comprehensive keyboard shortcuts and command reference."""
 from __future__ import annotations
 
 from textual.app import ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Static
+from textual.widgets import Static, Markdown
 
 
-HELP_TEXT = """\
-[bold cyan]KCode TUI — Keyboard Shortcuts[/bold cyan]
+HELP_MD = """\
+## Keyboard Shortcuts
 
-  [bold]Ctrl+N[/bold]      New session
-  [bold]Ctrl+L[/bold]      Clear chat display
-  [bold]Ctrl+C[/bold]      Quit
-  [bold]Escape[/bold]      Cancel streaming / close dialog
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+N` | New session |
+| `Ctrl+L` | Clear chat display |
+| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+K` | Compact context |
+| `Ctrl+H` | Show this help |
+| `Ctrl+Q` | Quit |
+| `Escape` | Cancel streaming / close dialog |
 
-[bold cyan]Slash Commands[/bold cyan]  (type [bold]/[/bold] in empty input)
+## Slash Commands
 
-  [bold]/new_session[/bold]       Start a new chat session
-  [bold]/refresh_sessions[/bold]  Reload sessions list
-  [bold]/toggle_sidebar[/bold]    Show/hide sidebar panel
-  [bold]/clear[/bold]             Clear chat display
-  [bold]/model[/bold]             Switch active model
-  [bold]/approval[/bold]          Toggle ask/auto approval mode
-  [bold]/help[/bold]              Show this help screen
-  [bold]/quit[/bold]              Exit KCode TUI
+Type `/` in the empty input to open the command palette.
 
-[bold cyan]Input[/bold cyan]
+### Session
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/new` | — | Start a fresh chat session |
+| `/compact` | — | Compact conversation to save tokens |
+| `/clear` | — | Clear the current chat display |
+| `/sessions` | — | List and switch between sessions |
+| `/refresh` | — | Reload sessions list |
 
-  [bold]Enter[/bold]           Send message
-  [bold]Shift+Enter[/bold]    Insert newline
+### View
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/sidebar` | `/sb` | Show / hide the sidebar panel |
+| `/theme` | `/t` | Switch between available themes |
 
-[dim]Press Escape to close.[/dim]
+### Model
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/model` | `/m` | Change the active LLM model |
+
+### Config
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/approval` | `/ap` | Toggle ask / auto approval mode |
+
+### Help & App
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `/help` | `/h` | Show this help screen |
+| `/doctor` | `/dr` | Check runtime health status |
+| `/quit` | `/q` | Exit KCode TUI |
+
+## Input
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Send message |
+| `Shift+Enter` | Insert newline |
+| `/` (empty input) | Open slash command palette |
+| `↑` `↓` | Navigate command palette |
+| `Tab` / `Enter` | Confirm palette selection |
+| `Escape` | Cancel streaming / close palette |
+
+---
+*Press Escape to close*
 """
 
 
@@ -44,20 +81,30 @@ class HelpScreen(ModalScreen[None]):
   }
 
   #help-box {
-    width: 64;
-    max-width: 80;
+    width: 72;
+    max-width: 86;
     height: auto;
-    max-height: 80%;
+    max-height: 85%;
     border: thick $accent;
     background: $surface;
-    padding: 1 2;
+    padding: 0;
     overflow-y: auto;
+  }
+
+  #help-content {
+    padding: 1 2;
+    height: auto;
+  }
+
+  #help-content > Markdown {
+    height: auto;
   }
   """
 
   def compose(self) -> ComposeResult:
     with Vertical(id="help-box"):
-      yield Static(HELP_TEXT)
+      with VerticalScroll(id="help-content"):
+        yield Markdown(HELP_MD)
 
   def on_key(self, event) -> None:
     if event.key == "escape":

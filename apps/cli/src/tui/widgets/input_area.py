@@ -1,4 +1,11 @@
-﻿"""User input area -- Enter submits, / triggers inline slash-command overlay."""
+"""User input area -- Enter submits, / triggers inline slash-command overlay.
+
+Design notes:
+  - Single-line / multi-line toggle (Shift+Enter for newlines)
+  - '/' at start opens the slash overlay automatically
+  - Placeholder text when empty
+  - All slash interaction delegated to MainScreen via messages
+"""
 from __future__ import annotations
 
 from textual.widgets import TextArea
@@ -9,8 +16,10 @@ class InputArea(TextArea):
   """Multi-line text input with slash-command autocomplete integration.
 
   Behaviour:
+    * Empty input shows a dim placeholder hint.
     * Typing '/' at the start (or after only whitespace) opens the slash overlay.
-    * While the overlay is open, arrow keys navigate, Tab / Enter confirms, Esc dismisses.
+    * While the overlay is open, continued typing updates the filter in real time.
+    * Arrow keys navigate, Tab / Enter confirms, Esc dismisses.
     * Enter (with overlay closed) submits the message.
     * Shift+Enter inserts a newline.
     * Escape cancels streaming when overlay is not open.
@@ -25,6 +34,8 @@ class InputArea(TextArea):
     padding: 0 1;
   }
   """
+
+  PLACEHOLDER = "Type a message... (/ for commands)"
 
   # ── Messages ───────────────────────────────────────────────────────
 
@@ -70,6 +81,21 @@ class InputArea(TextArea):
     super().__init__(**kwargs)
     self._slash_active: bool = False
 
+  # ── Change tracking for live filter ────────────────────────────────
+
+  def on_changed(self, event: TextArea.Changed) -> None:
+    """When text changes while slash overlay is open, update the filter."""
+    if not self._slash_active:
+      return
+    text = self.text
+    if not text.startswith("/"):
+      # User deleted the slash -- dismiss
+      self._slash_active = False
+      self.post_message(self.DismissSlash())
+      return
+    # Send the full slash text (e.g. "/mod") as the filter query
+    self.post_message(self.UpdateSlashFilter(text))
+
   # ── Key handling ───────────────────────────────────────────────────
 
   def on_key(self, event) -> None:
@@ -85,7 +111,12 @@ class InputArea(TextArea):
         event.prevent_default()
         self.post_message(self.NavigateSlash("down"))
         return
-      if key in ("tab", "enter"):
+      if key == "tab":
+        event.prevent_default()
+        self.post_message(self.ConfirmSlash())
+        return
+      # Enter while overlay open: confirm and execute immediately
+      if key == "enter":
         event.prevent_default()
         self.post_message(self.ConfirmSlash())
         return
@@ -130,10 +161,7 @@ class InputArea(TextArea):
 
   def clear_slash_text(self) -> None:
     """Remove the slash + filter text from the input after a command is selected."""
-    text = self.text
-    if text.startswith("/"):
-      # Find where the slash expression ends
-      self.clear()
+    self.clear()
 
   # ── Internals ──────────────────────────────────────────────────────
 

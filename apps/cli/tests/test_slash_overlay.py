@@ -1,12 +1,12 @@
-﻿"""Tests for the inline slash-command overlay widget."""
+"""Tests for the inline slash-command overlay widget."""
 from __future__ import annotations
 
 from apps.cli.src.tui.widgets.slash_overlay import (
     SLASH_COMMANDS,
     SlashCommand,
     filter_slash_commands,
-    _render_command_row,
-    CATEGORY_ICONS,
+    group_by_category,
+    CATEGORY_META,
 )
 
 
@@ -31,7 +31,7 @@ class TestSlashCommand:
     assert cmd.shortcut == ""
 
   def test_builtin_commands_count(self) -> None:
-    assert len(SLASH_COMMANDS) == 10
+    assert len(SLASH_COMMANDS) == 12
 
   def test_builtin_ids_unique(self) -> None:
     ids = [c.id for c in SLASH_COMMANDS]
@@ -70,14 +70,14 @@ class TestFilterSlashCommands:
   def test_filter_by_category(self) -> None:
     result = filter_slash_commands(SLASH_COMMANDS, "session")
     ids = [c.id for c in result]
-    assert "new_session" in ids
+    assert "new" in ids
     assert "refresh" in ids
     assert "compact" in ids
 
   def test_strips_leading_slash(self) -> None:
-    result = filter_slash_commands(SLASH_COMMANDS, "/help")
+    result = filter_slash_commands(SLASH_COMMANDS, "/quit")
     assert len(result) == 1
-    assert result[0].id == "help"
+    assert result[0].id == "quit"
 
   def test_case_insensitive(self) -> None:
     r1 = filter_slash_commands(SLASH_COMMANDS, "QUIT")
@@ -88,34 +88,40 @@ class TestFilterSlashCommands:
     result = filter_slash_commands(SLASH_COMMANDS, "zzz_nonexistent")
     assert len(result) == 0
 
-
-class TestRenderRow:
-  """Tests for _render_command_row."""
-
-  def test_contains_id_and_description(self) -> None:
-    cmd = SlashCommand("quit", "Quit", "Exit the app", "app", icon="X", shortcut="Ctrl+Q")
-    row = _render_command_row(cmd)
-    assert "/quit" in row
-    assert "Exit the app" in row
-    assert "[Ctrl+Q]" in row
-    assert "X" in row
-
-  def test_alias_shown_when_present(self) -> None:
-    cmd = SlashCommand("quit", "Quit", "Exit", "app", alias="q", icon="X")
-    row = _render_command_row(cmd)
-    assert "/q" in row
-
-  def test_no_alias_when_empty(self) -> None:
-    cmd = SlashCommand("clear", "Clear", "Clear chat", "view", icon="C")
-    row = _render_command_row(cmd)
-    # Should not have "//" or extra "/ "
-    assert "//" not in row
+  def test_multi_token_filter(self) -> None:
+    """Multi-word queries use AND logic."""
+    result = filter_slash_commands(SLASH_COMMANDS, "chat clear")
+    ids = [c.id for c in result]
+    assert "clear" in ids
 
 
-class TestCategoryIcons:
-  """Tests for CATEGORY_ICONS completeness."""
+class TestGroupByCategory:
+  """Tests for group_by_category."""
+
+  def test_groups_match_category_meta(self) -> None:
+    groups = group_by_category(SLASH_COMMANDS)
+    group_labels = [label for label, _, _ in groups]
+    # All CATEGORY_META labels should appear
+    meta_labels = [label for _, label, _ in CATEGORY_META]
+    for label in meta_labels:
+      assert label in group_labels, f"Missing category group: {label}"
+
+  def test_each_group_has_commands(self) -> None:
+    groups = group_by_category(SLASH_COMMANDS)
+    for label, icon, cmds in groups:
+      assert len(cmds) > 0, f"Category {label} is empty"
+
+  def test_total_commands_preserved(self) -> None:
+    groups = group_by_category(SLASH_COMMANDS)
+    total = sum(len(cmds) for _, _, cmds in groups)
+    assert total == len(SLASH_COMMANDS)
+
+
+class TestCategoryMeta:
+  """Tests for CATEGORY_META completeness."""
 
   def test_all_builtin_categories_covered(self) -> None:
     categories = {c.category for c in SLASH_COMMANDS}
+    meta_keys = {key for key, _, _ in CATEGORY_META}
     for cat in categories:
-      assert cat in CATEGORY_ICONS, f"Missing icon for category: {cat}"
+      assert cat in meta_keys, f"Missing meta for category: {cat}"
