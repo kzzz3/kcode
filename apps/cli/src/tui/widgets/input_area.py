@@ -18,6 +18,10 @@ class InputArea(TextArea):
   }
   """
 
+  class OpenCommandPalette(Message):
+    """Emitted when the user explicitly requests the command palette."""
+    pass
+
   class Submitted(Message):
     """Emitted when the user presses Enter (without Shift)."""
     def __init__(self, value: str) -> None:
@@ -25,7 +29,12 @@ class InputArea(TextArea):
       super().__init__()
 
   def on_key(self, event) -> None:
-    """Enter submits; Shift+Enter inserts newline."""
+    """Slash opens palette; Enter submits; Shift+Enter inserts newline."""
+    if event.key == "slash" and not self.text:
+      event.prevent_default()
+      self.post_message(self.OpenCommandPalette())
+      return
+
     if event.key == "enter" and not event.shift:
       event.prevent_default()
       text = self.text.strip()

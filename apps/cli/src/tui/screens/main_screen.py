@@ -18,6 +18,8 @@ from ..widgets.status_bar import StatusBar
 from ..widgets.session_panel import SessionPanel
 from ..widgets.approval_dialog import ApprovalDialog
 
+from .command_palette import CommandPalette
+
 
 class MainScreen(Screen):
   """Primary screen: chat + input + sidebar + status bar."""
@@ -71,6 +73,14 @@ class MainScreen(Screen):
     self._refresh_sessions()
 
   # --- Input handling ---
+
+  def on_input_area_open_command_palette(self, event: InputArea.OpenCommandPalette) -> None:
+    """Open the slash command palette."""
+    async def _run() -> None:
+      choice = await self.app.push_screen_wait(CommandPalette())
+      if choice:
+        self._run_command_choice(choice)
+    self.run_worker(_run())
 
   def on_input_area_submitted(self, event: InputArea.Submitted) -> None:
     """Handle user message submission."""
@@ -217,6 +227,23 @@ class MainScreen(Screen):
     self._refresh_sessions()
 
   # --- Actions ---
+  def _run_command_choice(self, choice: str) -> None:
+    """Execute a command selected from the palette."""
+    mapping = {
+      "new_session": self.action_new_session,
+      "refresh_sessions": self._refresh_sessions,
+      "toggle_sidebar": self._toggle_sidebar,
+      "quit": self.action_quit,
+    }
+    action = mapping.get(choice)
+    if action:
+      action()
+
+  def _toggle_sidebar(self) -> None:
+    """Toggle sidebar visibility."""
+    sidebar = self.query_one("#sidebar")
+    sidebar.display = not sidebar.display
+
 
   def action_new_session(self) -> None:
     self.on_session_panel_new_session(SessionPanel.NewSession())
