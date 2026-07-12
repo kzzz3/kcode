@@ -31,7 +31,7 @@ class TestSlashCommand:
     assert cmd.shortcut == ""
 
   def test_builtin_commands_count(self) -> None:
-    assert len(SLASH_COMMANDS) == 12
+    assert len(SLASH_COMMANDS) == 13
 
   def test_builtin_ids_unique(self) -> None:
     ids = [c.id for c in SLASH_COMMANDS]

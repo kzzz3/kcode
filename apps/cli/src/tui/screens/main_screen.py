@@ -133,7 +133,7 @@ class MainScreen(Screen):
     input_area = self.query_one(InputArea)
     input_area.deactivate_slash_overlay()
     input_area.clear_slash_text()
-    self._run_command(event.command_id)
+    self._run_command(event.command_id, content=event.content)
 
   # ─── Text submission ────────────────────────────────────────────────
 
@@ -274,8 +274,16 @@ class MainScreen(Screen):
 
   # ─── Slash command execution ────────────────────────────────────────
 
-  def _run_command(self, cmd_id: str) -> None:
+  def _run_command(self, cmd_id: str, *, content: str | None = None) -> None:
     """Execute a slash command by id."""
+    # Custom commands: send content as user message to agent
+    if cmd_id.startswith("user:") or cmd_id.startswith("project:"):
+      if content:
+        self._run_custom_command(content)
+        return
+      self.notify(f"Custom command {cmd_id} has no content", severity="warning")
+      return
+
     dispatch = {
       "new":       self.action_new_session,
       "refresh":   self._refresh_sessions,
@@ -288,6 +296,7 @@ class MainScreen(Screen):
       "compact":   self._compact_context,
       "sessions":  self._list_sessions,
       "doctor":    self._run_doctor,
+      "init":      self._run_init,
       "quit":      self.action_quit,
     }
     handler = dispatch.get(cmd_id)
@@ -295,6 +304,25 @@ class MainScreen(Screen):
       handler()
     else:
       self.notify(f"Unknown command: {cmd_id}", severity="warning")
+
+  def _run_custom_command(self, content: str) -> None:
+    """Send custom command content as a user message to the agent."""
+    if self._is_streaming:
+      self.notify("Agent is busy -- wait for it to finish.", severity="warning")
+      return
+    chat = self.query_one(ChatArea)
+    chat.add_message(content, "user")
+    self.run_worker(self._stream_worker(content), exclusive=True)
+
+  def _run_init(self) -> None:
+    """Initialize .kcode/ workspace."""
+    try:
+      from apps.cli.src.commands.init import run_init
+      workspace = self._runtime._config.workspace_root or Path.cwd()
+      run_init(workspace)
+      self.notify(f"Initialized .kcode/ in {workspace}")
+    except Exception as e:
+      self.notify(f"Init failed: {e}", severity="error")
 
   def _toggle_sidebar(self) -> None:
     """Toggle sidebar visibility."""

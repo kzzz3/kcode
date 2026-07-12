@@ -2,11 +2,13 @@
 
 Inspired by OpenCode/Crush command palette: typed '/' opens a non-modal
 overlay that filters in real time, grouped by category with icons, aliases,
-keyboard shortcuts, and rich visual hints.
+keyboard shortcuts, and rich visual hints. Supports both built-in and
+custom commands from user/project directories.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Vertical, Horizontal
@@ -25,6 +27,8 @@ class SlashCommand:
   alias: str = ""
   icon: str = ">"
   shortcut: str = ""
+  is_custom: bool = False
+  content: str | None = None  # For custom commands, the template content
 
 
 # ── Built-in command catalogue ──────────────────────────────────────────
@@ -46,6 +50,7 @@ SLASH_COMMANDS: list[SlashCommand] = [
   # Help
   SlashCommand("help",     "Help",          "Show keyboard shortcuts and commands",  "help",     alias="h",  icon="\u2753", shortcut="Ctrl+H"),
   SlashCommand("doctor",   "Doctor",        "Check runtime health status",           "help",     alias="dr", icon="\u2695"),
+  SlashCommand("init",     "Init Project",  "Create/Update kcode.workspace.md",      "project",  icon="\U0001f4c1"),
   # App
   SlashCommand("quit",     "Quit",          "Exit KCode TUI",                        "app",      alias="q",  icon="\u2716", shortcut="Ctrl+Q"),
 ]
@@ -56,6 +61,7 @@ CATEGORY_META: list[tuple[str, str, str]] = [
   ("view",    "View",     "\U0001f441"),
   ("model",   "Model",    "\U0001f916"),
   ("config",  "Config",   "\u2699"),
+  ("project", "Project",  "\U0001f4c1"),
   ("help",    "Help",     "\u2753"),
   ("app",     "App",      "\U0001f680"),
 ]
@@ -119,7 +125,7 @@ class SlashOverlay(Widget):
 
   Renders category-grouped commands with icons, aliases, descriptions,
   and keyboard shortcuts. Supports arrow-key navigation, real-time
-  filtering, and click/enter/tab confirmation.
+  filtering, click/enter/tab confirmation, and custom commands.
   """
 
   DEFAULT_CSS = """
@@ -142,14 +148,31 @@ class SlashOverlay(Widget):
     height: 1;
     padding: 0 1;
     color: $text-muted;
-    background: $surface;
   }
 
   #slash-commands {
     height: auto;
-    max-height: 20;
     overflow-y: auto;
-    scrollbar-size-vertical: 1;
+    max-height: 18;
+  }
+
+  #slash-empty {
+    height: 1;
+    display: none;
+    padding: 0 1;
+    color: $text-muted;
+    text-style: italic;
+  }
+
+  #slash-footer {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+    text-style: dim;
+  }
+
+  SlashOverlay.no-results #slash-empty {
+    display: block;
   }
 
   .slash-category {
@@ -157,106 +180,104 @@ class SlashOverlay(Widget):
     padding: 0 1;
     color: $accent;
     text-style: bold;
-    background: $surface;
-    margin-top: 0;
   }
 
   .slash-divider {
     height: 1;
-    padding: 0;
-    margin: 0;
+    margin: 0 1;
   }
 
   .slash-item {
     height: 1;
-    padding: 0 1 0 2;
-    color: $text;
-    background: transparent;
-  }
-
-  .slash-item:hover {
-    background: $accent 20%;
+    padding: 0 1;
   }
 
   .slash-item.selected {
-    background: $accent 30%;
-    color: $text;
+    background: $accent;
+    color: $background;
   }
 
-  .slash-item .slash-icon {
+  .slash-icon {
     width: 3;
     text-align: center;
   }
 
-  .slash-item .slash-name {
+  .slash-name {
     width: 16;
-    color: $success;
-    text-style: bold;
+    color: $text;
   }
 
-  .slash-item .slash-alias {
+  .slash-alias {
     width: 6;
     color: $text-muted;
+    text-style: dim;
   }
 
-  .slash-item .slash-desc {
+  .slash-desc {
     width: 1fr;
     color: $text-muted;
   }
 
-  .slash-item .slash-shortcut {
+  .slash-shortcut {
     width: 10;
-    color: $warning;
     text-align: right;
+    color: $text-muted;
+    text-style: dim;
   }
 
-  #slash-footer {
-    height: 1;
-    padding: 0 1;
-    color: $text-muted;
-    background: $surface;
-  }
-
-  #slash-empty {
-    height: 3;
-    display: none;
-    padding: 1 2;
-    color: $text-muted;
+  .slash-custom-badge {
+    width: 6;
+    color: $warning;
     text-style: italic;
-  }
-
-  SlashOverlay.has-results #slash-empty {
-    display: none;
-  }
-
-  SlashOverlay.no-results #slash-commands {
-    display: none;
-  }
-
-  SlashOverlay.no-results #slash-empty {
-    display: block;
   }
   """
 
   selected_id: reactive[str | None] = reactive(None)
-  visible: reactive[bool] = reactive(False)
 
-  def __init__(self, commands: list[SlashCommand] | None = None) -> None:
+  def __init__(self, commands: list[SlashCommand] | None = None, workspace_root: Path | None = None) -> None:
     super().__init__()
-    self._commands = commands or SLASH_COMMANDS
+    self._commands = commands or list(SLASH_COMMANDS)
     self._filtered: list[SlashCommand] = list(self._commands)
     self._selected_idx: int = 0
-    # Flat list of (widget_id, SlashCommand | None) for navigation
     self._nav_items: list[tuple[str, SlashCommand | None]] = []
+    self._workspace_root = workspace_root
+
+    # Load custom commands
+    self._load_custom_commands()
 
   class CommandSelected:
     """Posted when user confirms a command (Enter / Tab / click)."""
-    def __init__(self, command_id: str) -> None:
+    def __init__(self, command_id: str, content: str | None = None) -> None:
       self.command_id = command_id
+      self.content = content  # For custom commands
 
   class Dismissed:
     """Posted when user cancels the overlay (Escape)."""
     pass
+
+  def _load_custom_commands(self) -> None:
+    """Load custom commands from user and project directories."""
+    try:
+      from apps.cli.src.tui.utils.custom_commands import load_all_custom_commands
+      custom_commands = load_all_custom_commands(self._workspace_root)
+      
+      for cmd in custom_commands:
+        slash_cmd = SlashCommand(
+          id=cmd.id,
+          title=cmd.title,
+          description=cmd.description,
+          category="custom",
+          icon="\u270d",  # ✍
+          is_custom=True,
+          content=cmd.content,
+        )
+        self._commands.append(slash_cmd)
+      
+      # Update filtered list
+      self._filtered = list(self._commands)
+    except Exception as e:
+      # Log error but continue with built-in commands only
+      print(f"Warning: Failed to load custom commands: {e}")
 
   def compose(self) -> ComposeResult:
     yield Static("Type to filter commands...", id="slash-header")
@@ -270,18 +291,19 @@ class SlashOverlay(Widget):
 
   def show_overlay(self, query: str = "") -> None:
     """Show the overlay with optional initial filter."""
+    # Reload custom commands in case they changed
+    self._load_custom_commands()
     self._update_filter(query)
     self.visible = True
     self.add_class("visible")
 
   def hide_overlay(self) -> None:
-    """Hide the overlay and reset state."""
+    """Hide the overlay."""
     self.visible = False
     self.remove_class("visible")
-    self._selected_idx = 0
 
   def update_filter(self, query: str) -> None:
-    """Update the filter text and rebuild the list."""
+    """Update the command filter from external input."""
     self._update_filter(query)
 
   def move_up(self) -> None:
@@ -310,10 +332,12 @@ class SlashOverlay(Widget):
       return self._nav_items[self._selected_idx][1]
     return None
 
-  def confirm_selection(self) -> str | None:
-    """Return the selected command id, or None."""
+  def confirm_selection(self) -> tuple[str | None, str | None]:
+    """Return the selected command id and content, or (None, None)."""
     cmd = self.get_selected()
-    return cmd.id if cmd else None
+    if cmd:
+      return cmd.id, cmd.content if cmd.is_custom else None
+    return None, None
 
   # ── internals ──────────────────────────────────────────────────────
 
@@ -382,6 +406,7 @@ class SlashOverlay(Widget):
     """Create a single command row widget."""
     alias_text = f"/{cmd.alias}" if cmd.alias else ""
     shortcut_text = cmd.shortcut or ""
+    custom_badge = "custom" if cmd.is_custom else ""
 
     row = Horizontal(
       Static(f" {cmd.icon}", classes="slash-icon"),
@@ -389,12 +414,14 @@ class SlashOverlay(Widget):
       Static(alias_text, classes="slash-alias"),
       Static(cmd.description, classes="slash-desc"),
       Static(shortcut_text, classes="slash-shortcut"),
+      Static(custom_badge, classes="slash-custom-badge"),
       classes="slash-item",
       id=widget_id,
     )
 
     # Store cmd_id on the row for click handling
     row._cmd_id = cmd.id  # type: ignore[attr-defined]
+    row._cmd_content = cmd.content if cmd.is_custom else None  # type: ignore[attr-defined]
     return row
 
   def _update_selection_visual(self) -> None:
@@ -425,6 +452,7 @@ class SlashOverlay(Widget):
       target = target.parent  # type: ignore[assignment]
     if target is not None and hasattr(target, "_cmd_id"):
       cmd_id = target._cmd_id
+      content = getattr(target, "_cmd_content", None)
       self.selected_id = cmd_id
       # Post the selection
-      self.post_message(self.CommandSelected(cmd_id))
+      self.post_message(self.CommandSelected(cmd_id, content))
