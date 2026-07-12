@@ -26,14 +26,14 @@ class TestStatusBar:
     bar = StatusBar()
     bar.update_status(state="IDLE", model_name="gpt-4o")
     text = bar.render()
-    assert "IDLE" in text
-    assert "gpt-4o" in text
+    assert "IDLE" in str(text)
+    assert "gpt-4o" in str(text)
 
   def test_render_hides_zero_tokens(self):
     from apps.cli.src.tui.widgets.status_bar import StatusBar
     bar = StatusBar()
     text = bar.render()
-    assert "Tokens" not in text
+    assert "Tokens" not in str(text)
 
 
 # --- InputArea tests ---
@@ -58,7 +58,7 @@ class TestChatArea:
     from apps.cli.src.tui.widgets.chat_area import ChatArea
     area = ChatArea()
     assert area._stream_widget is None
-    assert area._active_tool is None
+    assert area._active_tools == {}
 
   def test_cancel_stream_clears_widget(self):
     from apps.cli.src.tui.widgets.chat_area import ChatArea

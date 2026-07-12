@@ -16,7 +16,6 @@ from ..widgets.chat_area import ChatArea
 from ..widgets.input_area import InputArea
 from ..widgets.status_bar import StatusBar
 from ..widgets.session_panel import SessionPanel
-from ..widgets.approval_dialog import ApprovalDialog
 from ..widgets.slash_overlay import SlashOverlay
 
 from .model_picker import ModelPicker
@@ -53,7 +52,7 @@ class MainScreen(Screen):
     ("ctrl+l", "clear_chat", "Clear Chat"),
     ("ctrl+b", "toggle_sidebar", "Sidebar"),
     ("ctrl+h", "help", "Help"),
-    ("ctrl+k", "compact", "Compact"),
+    ("ctrl+k", "command_palette", "Commands"),
     ("ctrl+q", "Quit"),
   ]
 
@@ -180,7 +179,11 @@ class MainScreen(Screen):
             )
             status.update_status(state="TOOL_RUNNING")
           elif chunk.type == ChunkType.TOOL_CALL_ARGS and chunk.delta:
-            chat.add_tool_call_args(chunk.tool_name or "tool", chunk.delta)
+            chat.add_tool_call_args(
+              chunk.tool_name or "tool",
+              chunk.delta,
+              tool_call_id=chunk.tool_call_id or "",
+            )
           elif chunk.type == ChunkType.TOOL_CALL_END:
             chat.add_tool_call_end(
               chunk.tool_name or "tool",
@@ -191,7 +194,6 @@ class MainScreen(Screen):
             status.update_status(state="THINKING")
         elif isinstance(chunk, AgentSnapshot):
           chat.end_stream()
-          # Update status with final info
           tokens = chunk.tokens_used or 0
           cost = chunk.cost_usd
           ctx = chunk.context_usage
@@ -392,7 +394,6 @@ class MainScreen(Screen):
       with contextlib.redirect_stdout(buf):
         run_doctor()
       output = buf.getvalue()
-      # Show a summary
       lines = output.strip().split("\n")
       summary = "\n".join(lines[:20])
       chat.add_message(f"**Doctor Results:**\n```\n{summary}\n```", "assistant")
@@ -409,6 +410,15 @@ class MainScreen(Screen):
 
   def action_help(self) -> None:
     self._show_help()
+
+  def action_command_palette(self) -> None:
+    """Ctrl+K -- open the slash overlay as a command palette."""
+    input_area = self.query_one(InputArea)
+    input_area.focus()
+    input_area.insert("/")
+    overlay = self.query_one(SlashOverlay)
+    overlay.show_overlay("/")
+    input_area.activate_slash_overlay()
 
   def action_compact(self) -> None:
     """Compact the conversation context."""

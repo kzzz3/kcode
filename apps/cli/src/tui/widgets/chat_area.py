@@ -1,8 +1,9 @@
-﻿"""Chat message display with live streaming Markdown and tool-call support.
+"""Chat message display with live streaming Markdown and tool-call support.
 
 Design notes (inspired by OpenCode):
   - Messages rendered as Rich Panels in a vertical scrollable container.
-  - Streaming text updates a live-rendered Markdown widget in-place.
+  - Streaming text uses buffered updates (not every-token re-render).
+  - Tool calls tracked by ID for parallel/concurrent MCP calls.
   - Tool calls shown as collapsible dimmed lines with expand on click/key.
   - Auto-scroll to bottom on new content.
 """
@@ -17,11 +18,10 @@ from textual.widgets import Static
 from rich.markdown import Markdown
 from rich.text import Text
 from rich.panel import Panel
-from rich.console import Group
 
 
 class ToolCallEntry(Widget):
-  """A single tool-call display — collapsed by default, expandable."""
+  """A single tool-call display -- collapsed by default, expandable."""
 
   DEFAULT_CSS = """
   ToolCallEntry {
@@ -75,6 +75,10 @@ class ToolCallEntry(Widget):
     else:
       self.remove_class("expanded")
 
+  def append_args(self, delta: str) -> None:
+    """Accumulate incremental tool-call args."""
+    self._tool_args += delta
+
   def update_result(self, result: str, is_error: bool = False) -> None:
     """Update the result after the tool call completes."""
     self._tool_result = result
@@ -88,7 +92,11 @@ class ToolCallEntry(Widget):
 
 
 class StreamMessage(Widget):
-  """A live-updating message bubble for streaming assistant content."""
+  """A live-updating message bubble for streaming assistant content.
+
+  Uses buffered rendering: only re-renders Markdown every N characters
+  or on finalization, to avoid per-token re-parsing overhead.
+  """
 
   DEFAULT_CSS = """
   StreamMessage {
@@ -104,22 +112,32 @@ class StreamMessage(Widget):
   }
   """
 
+  # Re-render Markdown at most every 200 chars or on finalize
+  _RENDER_THRESHOLD = 200
+
   def __init__(self) -> None:
     super().__init__()
     self._parts: list[str] = []
+    self._dirty_len: int = 0
 
   def compose(self) -> ComposeResult:
     yield Static("▌", id="stream-text")
 
   def append_delta(self, delta: str) -> None:
-    """Append text delta and re-render as Markdown."""
+    """Append text delta. Re-renders Markdown only when threshold is exceeded."""
     self._parts.append(delta)
+    total_len = sum(len(p) for p in self._parts)
+    if total_len - self._dirty_len >= self._RENDER_THRESHOLD:
+      self._render_incremental()
+
+  def _render_incremental(self) -> None:
+    """Re-render the Markdown preview."""
     full = "".join(self._parts)
+    self._dirty_len = len(full)
     text_widget = self.query_one("#stream-text", Static)
     try:
       text_widget.update(Markdown(full))
     except Exception:
-      # If Markdown parsing fails mid-stream, show raw text
       text_widget.update(full + "▌")
 
   def finalize(self) -> str:
@@ -139,8 +157,8 @@ class ChatArea(VerticalScroll):
   OpenCode-inspired design:
     - User messages: cyan panel with "You" header.
     - Assistant messages: green-bordered panel with rendered Markdown.
-    - Streaming: live Markdown preview updated on each token.
-    - Tool calls: collapsible entries with args + result.
+    - Streaming: buffered Markdown preview.
+    - Tool calls: tracked by tool_call_id for parallel support.
     - Auto-scrolls to bottom on new content.
   """
 
@@ -164,7 +182,7 @@ class ChatArea(VerticalScroll):
   def __init__(self) -> None:
     super().__init__()
     self._stream_widget: StreamMessage | None = None
-    self._active_tool: ToolCallEntry | None = None
+    self._active_tools: dict[str, ToolCallEntry] = {}
 
   # ── Public API ────────────────────────────────────────────────────────
 
@@ -217,19 +235,24 @@ class ChatArea(VerticalScroll):
     """Show a new tool call entry (collapsible)."""
     entry = ToolCallEntry(tool_name)
     self.mount(entry)
-    self._active_tool = entry
+    key = tool_call_id or tool_name
+    self._active_tools[key] = entry
     self._scroll_end()
 
-  def add_tool_call_args(self, tool_name: str, delta: str) -> None:
-    """Incremental tool args — not displayed inline (too noisy)."""
-    pass
+  def add_tool_call_args(self, tool_name: str, delta: str, tool_call_id: str = "") -> None:
+    """Incremental tool args -- accumulated and shown on expand."""
+    key = tool_call_id or tool_name
+    entry = self._active_tools.get(key)
+    if entry is not None:
+      entry.append_args(delta)
 
   def add_tool_call_end(self, tool_name: str, tool_call_id: str = "",
                         result: str = "", is_error: bool = False) -> None:
     """Update tool call entry with result."""
-    if self._active_tool is not None:
-      self._active_tool.update_result(result, is_error)
-      self._active_tool = None
+    key = tool_call_id or tool_name
+    entry = self._active_tools.pop(key, None)
+    if entry is not None:
+      entry.update_result(result, is_error)
     self._scroll_end()
 
   # ── Internal ──────────────────────────────────────────────────────────

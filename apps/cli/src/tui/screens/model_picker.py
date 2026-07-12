@@ -1,4 +1,11 @@
-﻿"""Model picker modal for TUI."""
+"""Model picker modal for TUI.
+
+Features:
+  - Filterable model list with search
+  - Enter submits highlighted item (not always first)
+  - Dim background overlay for modal feel
+  - Escape closes
+"""
 from __future__ import annotations
 
 from textual.app import ComposeResult
@@ -13,6 +20,7 @@ class ModelPicker(ModalScreen[str | None]):
   DEFAULT_CSS = """
   ModelPicker {
     align: center middle;
+    background: $boost 60%;
   }
 
   #model-picker {
@@ -52,8 +60,13 @@ class ModelPicker(ModalScreen[str | None]):
     self._rebuild_list(event.value)
 
   def on_input_submitted(self, event: Input.Submitted) -> None:
+    """Enter in the input field: select the highlighted item from the list."""
+    list_view = self.query_one(ListView)
+    idx = list_view.index
     filtered = self._filtered_models(event.value)
-    if filtered:
+    if idx is not None and 0 <= idx < len(filtered):
+      self.dismiss(filtered[idx])
+    elif filtered:
       self.dismiss(filtered[0])
     else:
       self.dismiss(None)

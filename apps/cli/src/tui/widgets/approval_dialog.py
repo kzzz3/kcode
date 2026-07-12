@@ -1,4 +1,4 @@
-﻿"""Modal approval dialog for sensitive tool calls."""
+"""Modal approval dialog for sensitive tool calls."""
 from __future__ import annotations
 
 from textual.app import ComposeResult
@@ -13,6 +13,7 @@ class ApprovalDialog(ModalScreen[bool]):
   DEFAULT_CSS = """
   ApprovalDialog {
     align: center middle;
+    background: $boost 60%;
   }
 
   #dialog {
@@ -54,7 +55,6 @@ class ApprovalDialog(ModalScreen[bool]):
   def compose(self) -> ComposeResult:
     import json
     args_display = json.dumps(self.tool_args, indent=2, ensure_ascii=False)
-    # Truncate very long args
     if len(args_display) > 500:
       args_display = args_display[:500] + "\n..."
 
@@ -78,4 +78,3 @@ class ApprovalDialog(ModalScreen[bool]):
       self.dismiss(True)
     elif event.button.id == "btn-reject":
       self.dismiss(False)
-

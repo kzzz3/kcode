@@ -4,7 +4,7 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Static, Markdown
+from textual.widgets import Markdown
 
 
 HELP_MD = """\
@@ -15,7 +15,7 @@ HELP_MD = """\
 | `Ctrl+N` | New session |
 | `Ctrl+L` | Clear chat display |
 | `Ctrl+B` | Toggle sidebar |
-| `Ctrl+K` | Compact context |
+| `Ctrl+K` | Command palette |
 | `Ctrl+H` | Show this help |
 | `Ctrl+Q` | Quit |
 | `Escape` | Cancel streaming / close dialog |
@@ -78,6 +78,7 @@ class HelpScreen(ModalScreen[None]):
   DEFAULT_CSS = """
   HelpScreen {
     align: center middle;
+    background: $boost 60%;
   }
 
   #help-box {
