@@ -167,7 +167,7 @@ class SlashOverlay(Widget):
     text-style: bold dim;
   }
 
-  .slash-category:first-child {
+  .slash-category:first-of-type {
     margin-top: 0;
   }
 
