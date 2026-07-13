@@ -78,7 +78,7 @@ class HelpScreen(ModalScreen[None]):
 
   DEFAULT_CSS = """
   HelpScreen {
-    align: center middle;
+    align: center top;
     background: $boost 60%;
   }
 

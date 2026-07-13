@@ -1,4 +1,4 @@
-"""Modal approval dialog for sensitive tool calls."""
+﻿"""Modal approval dialog for sensitive tool calls."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class ApprovalDialog(ModalScreen[bool]):
 
   ApprovalDialog {
 
-    align: center middle;
+    align: center top;
 
     background: $boost 60%;
 
@@ -84,7 +84,7 @@ class ApprovalDialog(ModalScreen[bool]):
 
     height: auto;
 
-    align: center middle;
+    align: center top;
 
     margin: 1 0 0 0;
 

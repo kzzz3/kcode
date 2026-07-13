@@ -1,4 +1,4 @@
-"""Model picker modal for TUI.
+﻿"""Model picker modal for TUI.
 
 Features:
   - Filterable model list with search
@@ -19,7 +19,7 @@ class ModelPicker(ModalScreen[str | None]):
 
   DEFAULT_CSS = """
   ModelPicker {
-    align: center middle;
+    align: center top;
     background: $boost 60%;
   }
 

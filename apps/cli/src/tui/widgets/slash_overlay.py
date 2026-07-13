@@ -1,4 +1,4 @@
-"""Inline slash-command autocomplete overlay -- dropdown below InputArea.
+﻿"""Inline slash-command autocomplete overlay -- dropdown below InputArea.
 
 Inspired by OpenCode/Crush command palette: typed '/' opens a non-modal
 overlay that filters in real time, grouped by category with icons, aliases,
@@ -268,7 +268,7 @@ class SlashOverlay(Widget):
     padding: 1 2;
     color: $text-muted;
     text-style: dim italic;
-    text-align: center middle;
+    text-align: center;
     background: $surface;
   }
 
@@ -558,7 +558,7 @@ class SlashOverlay(Widget):
       width: 16;
       color: $accent;
       text-style: bold;
-      content-align: left middle;
+      content-align: left top;
     }
 
     .arg-input {
