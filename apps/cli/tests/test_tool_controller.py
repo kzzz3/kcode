@@ -39,6 +39,19 @@ def test_dispatch_slash_doctor_runs():
   assert result is None
 
 
+def test_dispatch_slash_approval_toggles():
+  toggled = []
+  tc, _, approval = _make_tc(on_approval_toggled=lambda m: toggled.append(m))
+  result = tc.dispatch_slash("approval")
+  assert result is None
+  assert approval.mode == "auto"
+
+
+def test_dispatch_slash_unknown_returns_none():
+  tc, _, _ = _make_tc()
+  assert tc.dispatch_slash("nonexistent") is None
+
+
 def test_list_models_fallback():
   tc, rt, _ = _make_tc()
   rt._model_name = "test-model"
@@ -100,3 +113,21 @@ def test_compact_context_error():
   rt.compact.side_effect = RuntimeError("boom")
   tc.compact_context()
   assert any("boom" in msg for msg, _ in notified)
+
+
+def test_cycle_theme():
+  tc, _, _ = _make_tc()
+  themes = ["dark", "light", "nord"]
+  assert tc.cycle_theme(themes, "dark") == "light"
+  assert tc.cycle_theme(themes, "light") == "nord"
+  assert tc.cycle_theme(themes, "nord") == "dark"
+
+
+def test_cycle_theme_empty():
+  tc, _, _ = _make_tc()
+  assert tc.cycle_theme([], "dark") is None
+
+
+def test_cycle_theme_unknown_current():
+  tc, _, _ = _make_tc()
+  assert tc.cycle_theme(["a", "b"], "unknown") == "a"

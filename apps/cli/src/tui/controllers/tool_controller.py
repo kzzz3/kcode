@@ -1,34 +1,19 @@
 ﻿"""ToolController -- orchestrates slash commands, model switching, and tool-related actions.
 
 Extracts tool dispatch, model listing, and utility actions from MainScreen
-so the screen only wires events to controllers.
+so the screen only does layout and event routing.
 """
 from __future__ import annotations
 
 import io
 import contextlib
 import logging
-from dataclasses import dataclass
 from typing import Callable
 
 from apps.cli.src.core.agent_runtime import CliAgentRuntime
 from apps.cli.src.tui.controllers.approval_controller import ApprovalController
 
 _log = logging.getLogger(__name__)
-
-
-# ── Slash command descriptor ────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class SlashCommand:
-  """A registered slash command with its handler id."""
-  name: str
-  handler: str
-  requires_input: bool = False
-
-
-# ── Controller ──────────────────────────────────────────────────────
 
 
 class ToolController:
@@ -63,29 +48,27 @@ class ToolController:
   def dispatch_slash(self, handler: str) -> str | None:
     """Dispatch a slash command by handler id.
 
-    Returns:
-      "needs_input" if the command requires the input area to be focused.
-      None otherwise (the command was handled inline).
+    Returns an action id string for actions that need UI side-effects,
+    or None if handled entirely within the controller.
     """
-    if handler == "model_picker":
-      return "open_model_picker"
-    elif handler == "help":
-      return "show_help"
-    elif handler == "compact":
+    actions = {
+      "model_picker": "open_model_picker",
+      "help": "show_help",
+      "clear": "clear_chat",
+      "sessions": "list_sessions",
+      "theme": "cycle_theme",
+      "sidebar": "toggle_sidebar",
+    }
+    if handler in ("compact",):
       self.compact_context()
-    elif handler == "clear":
-      return "clear_chat"
-    elif handler == "sessions":
-      return "list_sessions"
-    elif handler == "doctor":
+      return None
+    if handler in ("doctor",):
       self.run_doctor()
-    elif handler == "theme":
-      return "cycle_theme"
-    elif handler == "approval":
+      return None
+    if handler == "approval":
       self.toggle_approval()
-    elif handler == "sidebar":
-      return "toggle_sidebar"
-    return None
+      return None
+    return actions.get(handler)
 
   # ── Model management ─────────────────────────────────────────────
 
@@ -149,3 +132,15 @@ class ToolController:
     except Exception as exc:
       _log.error("Doctor check failed: %s", exc)
       self._on_doctor_output(f"Doctor check failed: {exc}")
+
+  # ── Theme cycling ────────────────────────────────────────────────
+
+  def cycle_theme(self, available_themes: list[str], current_theme: str) -> str | None:
+    """Return the next theme name in the cycle, or None if no themes."""
+    if not available_themes:
+      return None
+    try:
+      idx = available_themes.index(current_theme)
+      return available_themes[(idx + 1) % len(available_themes)]
+    except ValueError:
+      return available_themes[0]
