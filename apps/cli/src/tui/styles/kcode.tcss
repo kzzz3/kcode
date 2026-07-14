@@ -1,0 +1,83 @@
+/* KCode theme tokens + workbench layout. */
+
+$surface: #111317;
+$surface-raised: #181b20;
+$surface-overlay: #1e2128;
+$text: #e6e8eb;
+$text-muted: #8b929c;
+$text-inverse: #111317;
+$accent: #39c5cf;
+$accent-muted: #2a9aa3;
+$success: #45c486;
+$warning: #e7b95e;
+$error: #ef6b73;
+$info: #5b9df9;
+
+Screen {
+  background: $surface;
+}
+
+#workspace-bar {
+  dock: top;
+  height: 1;
+  background: $surface-raised;
+  color: $text-muted;
+  padding: 0 1;
+}
+
+#main-body {
+  width: 100%;
+  height: 1fr;
+}
+
+#chat {
+  width: 1fr;
+  height: 1fr;
+  background: $surface;
+  padding: 0 1;
+}
+
+#activity-rail {
+  width: 30;
+  min-width: 22;
+  height: 100%;
+  background: $surface-raised;
+  padding: 0 1;
+}
+
+#composer-dock {
+  dock: bottom;
+  height: auto;
+  max-height: 12;
+  background: $surface;
+  padding: 0 1;
+}
+
+#status {
+  dock: bottom;
+  height: 1;
+  background: $surface-raised;
+  color: $text-muted;
+  padding: 0 1;
+}
+
+/* narrow <90 cols */
+Screen.narrow #activity-rail {
+  display: none;
+}
+
+Screen.narrow #workspace-bar {
+  display: none;
+}
+
+/* medium 90-139 cols */
+Screen.medium #activity-rail {
+  width: 22;
+  min-width: 18;
+}
+
+/* wide >=140 cols */
+Screen.wide #activity-rail {
+  width: 32;
+  min-width: 24;
+}

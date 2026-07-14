@@ -1,4 +1,4 @@
-﻿"""Session management panel — list, create, select sessions."""
+"""Session management panel — list, create, select sessions."""
 from __future__ import annotations
 
 from textual.widgets import ListView, ListItem, Label, Button, Static
@@ -53,8 +53,8 @@ class SessionPanel(Vertical):
     """Emitted when user clicks Refresh."""
     pass
 
-  def __init__(self) -> None:
-    super().__init__()
+  def __init__(self, **kwargs) -> None:
+    super().__init__(**kwargs)
     self._sessions: list[tuple[str, str]] = []  # (id, title)
 
   def compose(self):

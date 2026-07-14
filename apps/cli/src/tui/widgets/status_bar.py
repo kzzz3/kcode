@@ -72,9 +72,9 @@ class StatusBar(Static):
 
   approval_mode: reactive[str] = reactive("auto")
 
-  def __init__(self) -> None:
+  def __init__(self, **kwargs) -> None:
 
-    super().__init__()
+    super().__init__(**kwargs)
 
     self._spinner = itertools.cycle(_SPINNER_FRAMES)
 

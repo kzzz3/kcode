@@ -409,9 +409,9 @@ class ChatArea(VerticalScroll):
 
       super().__init__()
 
-  def __init__(self) -> None:
+  def __init__(self, **kwargs) -> None:
 
-    super().__init__()
+    super().__init__(**kwargs)
 
     self._stream_widget: StreamMessage | None = None
 

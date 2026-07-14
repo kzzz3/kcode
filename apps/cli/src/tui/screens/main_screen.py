@@ -1,13 +1,18 @@
-﻿"""Main TUI screen -- thin orchestrator wired to controllers."""
+"""Main TUI screen -- thin orchestrator wired to controllers.
+
+Uses external theme.tcss + workbench.tcss for styling.
+Responsive layout: narrow (<90), medium (90-139), wide (>=140).
+"""
 from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Header, Footer
+from textual.widgets import Static
 
 from apps.cli.src.core.agent_runtime import CliAgentRuntime
 
@@ -37,28 +42,41 @@ _SLASH_ACTIONS: dict[str, str] = {
   "sidebar": "toggle_sidebar",
 }
 
+# Responsive breakpoints (columns)
+_NARROW_MAX = 89
+_MEDIUM_MAX = 139
+
+
+class WorkspaceBar(Static):
+  """Top bar showing repo, branch, model and session info."""
+
+  def __init__(self, workspace: Path, model: str = "", **kwargs) -> None:
+    super().__init__(**kwargs)
+    self._workspace = workspace
+    self._model = model
+    self._session_title = ""
+
+  def set_model(self, model: str) -> None:
+    self._model = model
+    self._refresh()
+
+  def set_session(self, title: str) -> None:
+    self._session_title = title
+    self._refresh()
+
+  def _refresh(self) -> None:
+    parts = [f"  {self._workspace.name}"]
+    if self._model:
+      parts.append(f"  {self._model}")
+    if self._session_title:
+      parts.append(f"  {self._session_title}")
+    self.update("".join(parts))
+
 
 class MainScreen(Screen):
-  """Primary screen: chat + input + sidebar + inline slash overlay + status bar."""
+  """Primary screen: workspace-bar + body + composer + status."""
 
-  CSS = """
-  #main-container {
-    width: 100%;
-    height: 1fr;
-  }
-  #chat-container {
-    width: 1fr;
-    height: 100%;
-  }
-  #input-wrapper {
-    height: auto;
-  }
-  #sidebar {
-    width: 30;
-    min-width: 20;
-    height: 100%;
-  }
-  """
+  CSS_PATH = Path(__file__).parent.parent / "styles" / "kcode.tcss"
 
   BINDINGS = [
     ("ctrl+n", "new_session", "New Session"),
@@ -95,16 +113,18 @@ class MainScreen(Screen):
   # ── Compose ──────────────────────────────────────────────────────
 
   def compose(self) -> ComposeResult:
-    yield Header()
-    with Horizontal(id="main-container"):
-      yield SessionPanel(id="sidebar")
-      with Vertical(id="chat-container"):
-        yield ChatArea(id="chat")
-        with Vertical(id="input-wrapper"):
-          yield SlashOverlay(id="slash-overlay")
-          yield InputArea(id="input")
+    yield WorkspaceBar(
+      self._runtime._workspace_root,
+      model=self._runtime._model_name,
+      id="workspace-bar",
+    )
+    with Horizontal(id="main-body"):
+      yield ChatArea(id="chat")
+      yield SessionPanel(id="activity-rail")
+    with Vertical(id="composer-dock"):
+      yield SlashOverlay(id="slash-overlay")
+      yield InputArea(id="input")
     yield StatusBar(id="status")
-    yield Footer()
 
   def on_mount(self) -> None:
     self._approval._ask_approval = self._ask_approval_from_thread
@@ -112,6 +132,25 @@ class MainScreen(Screen):
     self._sessions.refresh()
     self._load_custom_commands()
     self.query_one(ChatArea).show_welcome()
+    self._apply_responsive_class()
+
+  # ── Responsive layout ────────────────────────────────────────────
+
+  def on_resize(self, event) -> None:
+    self._apply_responsive_class()
+
+  def _apply_responsive_class(self) -> None:
+    w = self.size.width
+    new_cls = (
+      "narrow" if w <= _NARROW_MAX
+      else "medium" if w <= _MEDIUM_MAX
+      else "wide"
+    )
+    for cls in ("narrow", "medium", "wide"):
+      if cls == new_cls:
+        self.add_class(cls)
+      else:
+        self.remove_class(cls)
 
   # ── Approval bridge ──────────────────────────────────────────────
 
@@ -146,108 +185,81 @@ class MainScreen(Screen):
       chat.add_tool_call_start(ev.tool_name, ev.tool_call_id, ev.turn_id)
 
     def on_tool_args(ev):
-      chat.add_tool_call_args(ev.tool_call_id, ev.delta, ev.turn_id)
+      chat.add_tool_call_args(ev.tool_call_id, ev.arguments)
 
-    def on_tool_end(ev):
-      chat.add_tool_call_end(ev.tool_call_id, ev.result, ev.turn_id)
+    def on_tool_result(ev):
+      chat.add_tool_call_result(ev.tool_call_id, ev.result, ev.duration_ms)
+
+    def on_token_count(ev):
+      status.set_token_info(ev.prompt_tokens, ev.completion_tokens, ev.total_cost)
+
+    def on_context_usage(ev):
+      status.set_context_usage(ev.used, ev.budget)
+
+    def on_turn_complete(ev):
       self._agent_step += 1
       status.set_step_count(self._agent_step)
-
-    def on_finished(ev):
-      chat.end_stream(ev.turn_id)
-      status.set_step_count(self._agent_step)
-
-    def on_failed(ev):
-      chat.cancel_stream()
-      chat.add_message(f"Agent error: {ev.message}", "assistant")
+      if ev.model:
+        status.set_model(ev.model)
 
     return TurnCallbacks(
-      on_text=on_text, on_tool_start=on_tool_start,
-      on_tool_args=on_tool_args, on_tool_end=on_tool_end,
-      on_finished=on_finished, on_failed=on_failed,
+      on_text_delta=on_text,
+      on_tool_start=on_tool_start,
+      on_tool_args_delta=on_tool_args,
+      on_tool_result=on_tool_result,
+      on_token_count=on_token_count,
+      on_context_usage=on_context_usage,
+      on_turn_complete=on_turn_complete,
     )
 
-  # ── Controller callbacks ─────────────────────────────────────────
+  # ── Message routing ──────────────────────────────────────────────
 
-  def _on_sessions_updated(self, infos):
-    panel = self.query_one(SessionPanel)
-    panel.set_sessions([
-      {"id": i.id, "title": i.title, "updated_at": i.updated_at,
-       "message_count": i.message_count, "is_current": i.is_current}
-      for i in infos
-    ])
-
-  def _on_session_loaded(self, session_id, messages):
-    chat = self.query_one(ChatArea)
-    chat.clear()
-    self._agent_step = 0
-    self.query_one(StatusBar).set_step_count(0)
-    for msg in messages:
-      role, content = msg.get("role", "user"), msg.get("content", "")
-      if content and role in ("user", "assistant"):
-        chat.add_message(content, role)
-    if session_id:
-      self.notify(f"Session {session_id[:8]} loaded")
-
-  def _on_model_changed(self, model_name: str) -> None:
-    self.query_one(StatusBar).update_status(model_name=model_name)
-    self.notify(f"Model: {model_name}")
-
-  def _on_approval_toggled(self, mode: str) -> None:
-    self.query_one(StatusBar).update_status(approval_mode=mode)
-    self.notify(f"Approval mode: {mode}")
-
-  def _on_doctor_output(self, summary: str) -> None:
-    self.query_one(ChatArea).add_message(
-      f"**Doctor Results:**\n```\n{summary}\n```", "assistant"
-    )
-
-  # ── Slash overlay events ─────────────────────────────────────────
-
-  def on_input_area_open_slash_overlay(self, event: InputArea.OpenSlashOverlay) -> None:
-    overlay = self.query_one(SlashOverlay)
-    overlay.show_overlay(event.query)
-    self.query_one(InputArea).activate_slash_overlay()
-
-  def on_input_area_update_slash_filter(self, event: InputArea.UpdateSlashFilter) -> None:
-    overlay = self.query_one(SlashOverlay)
-    if overlay.visible:
-      overlay.update_filter(event.query)
-
-  def on_input_area_navigate_slash(self, event: InputArea.NavigateSlash) -> None:
-    overlay = self.query_one(SlashOverlay)
-    (overlay.select_previous if event.direction == "up" else overlay.select_next)()
-
-  def on_input_area_select_slash(self, event: InputArea.SelectSlash) -> None:
-    self.query_one(SlashOverlay).apply_selected()
-
-  def on_input_area_dismiss_slash(self, event: InputArea.DismissSlash) -> None:
-    self._dismiss_overlay()
-
-  def on_slash_overlay_slash_command(self, event: SlashOverlay.SlashCommand) -> None:
-    self._dismiss_overlay()
-    cmd = event.command
-    if not cmd.handler:
-      return
-    if cmd.requires_input:
-      self.query_one(InputArea).focus()
-      return
-    action = self._tools.dispatch_slash(cmd.handler)
-    if action:
-      getattr(self, f"_do_{action}", lambda: None)()
-
-  def _dismiss_overlay(self) -> None:
-    self.query_one(SlashOverlay).hide_overlay()
-    self.query_one(InputArea).input.read_only = False
-    self.query_one(InputArea).focus()
-
-  # ── Main send flow ───────────────────────────────────────────────
-
-  def on_input_area_user_message(self, event: InputArea.UserMessage) -> None:
-    text = event.text.strip()
+  def on_input_area_submit(self, event: InputArea.Submit) -> None:
+    text = event.value.strip()
     if not text:
       return
-    chat, input_area, status = self.query_one(ChatArea), self.query_one(InputArea), self.query_one(StatusBar)
+    if text.startswith("/"):
+      self._handle_slash(text)
+      return
+    self._send_to_agent(text)
+
+  def on_input_area_slash_filter(self, event: InputArea.SlashFilter) -> None:
+    self.query_one(SlashOverlay).update_filter(event.filter_text)
+
+  def on_input_area_slash_select(self, event: InputArea.SlashSelect) -> None:
+    overlay = self.query_one(SlashOverlay)
+    overlay.select_current()
+
+  def on_slash_overlay_command_selected(self, event: SlashOverlay.CommandSelected) -> None:
+    self._dismiss_overlay()
+    handler = event.handler
+    if handler in _SLASH_ACTIONS:
+      action = _SLASH_ACTIONS[handler]
+      getattr(self, f"_do_{action}")()
+    else:
+      result = self._tools.dispatch_slash(handler)
+      if result:
+        self.query_one(ChatArea).add_message(result, "system")
+
+  def _handle_slash(self, text: str) -> None:
+    cmd = text.split()[0].lstrip("/").lower()
+    if cmd in _SLASH_ACTIONS:
+      self._dismiss_overlay()
+      getattr(self, f"_do_{_SLASH_ACTIONS[cmd]}")()
+    else:
+      self._send_to_agent(text)
+
+  def _dismiss_overlay(self) -> None:
+    overlay = self.query_one(SlashOverlay)
+    overlay.hide_overlay()
+    self.query_one(InputArea).focus()
+
+  # ── Agent interaction ────────────────────────────────────────────
+
+  def _send_to_agent(self, text: str) -> None:
+    chat = self.query_one(ChatArea)
+    input_area = self.query_one(InputArea)
+    status = self.query_one(StatusBar)
     chat.add_message(text, "user")
     input_area.clear()
     input_area.show_thinking()
@@ -257,7 +269,9 @@ class MainScreen(Screen):
     self.run_worker(self._stream_agent(text))
 
   async def _stream_agent(self, user_input: str) -> None:
-    chat, input_area, status = self.query_one(ChatArea), self.query_one(InputArea), self.query_one(StatusBar)
+    chat = self.query_one(ChatArea)
+    input_area = self.query_one(InputArea)
+    status = self.query_one(StatusBar)
     try:
       import asyncio
       loop = asyncio.get_running_loop()
@@ -307,7 +321,9 @@ class MainScreen(Screen):
   def _load_custom_commands(self) -> None:
     try:
       overlay = self.query_one(SlashOverlay)
-      overlay.add_commands(load_project_commands(self._runtime._workspace_root) + load_user_commands())
+      overlay.add_commands(
+        load_project_commands(self._runtime._workspace_root) + load_user_commands()
+      )
     except Exception as exc:
       _log.error("Failed to load custom commands: %s", exc)
 
@@ -316,7 +332,9 @@ class MainScreen(Screen):
   def _do_open_model_picker(self) -> None:
     async def _run() -> None:
       models = self._tools.list_models()
-      chosen = await self.app.push_screen_wait(ModelPicker(models, self._tools.current_model))
+      chosen = await self.app.push_screen_wait(
+        ModelPicker(models, self._tools.current_model)
+      )
       if chosen and chosen != self._tools.current_model:
         self._tools.set_model(chosen)
       self.query_one(InputArea).focus()
@@ -329,7 +347,7 @@ class MainScreen(Screen):
     self.run_worker(_show())
 
   def _do_list_sessions(self) -> None:
-    sidebar = self.query_one("#sidebar")
+    sidebar = self.query_one("#activity-rail")
     if not sidebar.display:
       sidebar.display = True
     self._sessions.refresh()
@@ -346,7 +364,7 @@ class MainScreen(Screen):
       self.notify("No themes available")
 
   def _do_toggle_sidebar(self) -> None:
-    sidebar = self.query_one("#sidebar")
+    sidebar = self.query_one("#activity-rail")
     sidebar.display = not sidebar.display
     self.notify("Sidebar " + ("shown" if sidebar.display else "hidden"))
 
@@ -376,5 +394,39 @@ class MainScreen(Screen):
   def action_compact(self) -> None:
     self._tools.compact_context()
 
+  def action_clear_chat(self) -> None:
+    chat = self.query_one(ChatArea)
+    chat.clear()
+    self._agent_step = 0
+    self.query_one(StatusBar).set_step_count(0)
+
   def action_quit(self) -> None:
     self.app.exit()
+
+  # ── Controller callbacks ─────────────────────────────────────────
+
+  def _on_sessions_updated(self) -> None:
+    sessions = self._sessions.list_sessions()
+    self.query_one(SessionPanel).refresh_list(sessions)
+
+  def _on_session_loaded(self, title: str) -> None:
+    self.query_one(ChatArea).clear()
+    self._agent_step = 0
+    self.query_one(StatusBar).set_step_count(0)
+    ws_bar = self.query_one(WorkspaceBar)
+    ws_bar.set_session(title)
+    self.notify(f"Loaded: {title}")
+
+  def _on_model_changed(self, model: str) -> None:
+    self.query_one(StatusBar).set_model(model)
+    ws_bar = self.query_one(WorkspaceBar)
+    ws_bar.set_model(model)
+    self.notify(f"Model: {model}")
+
+  def _on_approval_toggled(self, mode: str) -> None:
+    self._approval.set_mode(mode)
+    self.query_one(StatusBar).set_approval_mode(mode)
+    self.notify(f"Approval: {mode}")
+
+  def _on_doctor_output(self, output: str) -> None:
+    self.query_one(ChatArea).add_message(output, "system")
