@@ -1,6 +1,7 @@
 ﻿"""KCode Terminal User Interface -- Textual application shell."""
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from textual.app import App
@@ -18,6 +19,8 @@ from apps.cli.src.tools.builtin_readonly import register_readonly_tools
 
 from .screens.main_screen import MainScreen
 
+_log = logging.getLogger(__name__)
+
 
 class KCodeTUI(App):
   """KCode Terminal User Interface."""
@@ -32,14 +35,22 @@ class KCodeTUI(App):
     Binding("ctrl+q", "quit", "Quit", show=False),
   ]
 
-  def __init__(self) -> None:
+  def __init__(
+    self,
+    *,
+    workspace_root: Path | None = None,
+    approval_mode: str = "auto",
+    model: str | None = None,
+  ) -> None:
     super().__init__()
+    self._workspace_root = (workspace_root or Path.cwd()).resolve()
+    self._approval_mode = approval_mode
+    self._model_override = model
     self._runtime: CliAgentRuntime | None = None
 
   def _create_agent_runtime(self) -> CliAgentRuntime:
     """Build the agent runtime from resolved config."""
-    workspace_root = Path.cwd()
-    config = resolve_config(workspace_root)
+    config = resolve_config(self._workspace_root)
 
     model_client = OpenAICompatibleClient(
       ModelProviderConfig(
@@ -60,13 +71,13 @@ class KCodeTUI(App):
     bus = EventBus()
 
     return CliAgentRuntime(
-      workspace_root=workspace_root,
+      workspace_root=self._workspace_root,
       model_client=model_client,
-      model_name=config.model.default_model or "gpt-4o",
+      model_name=self._model_override or config.model.default_model or "gpt-4o",
       tool_registry=tool_registry,
       session_store=session_store,
       bus=bus,
-      config=AgentLoopConfig(),
+      config=AgentLoopConfig(approval_mode=self._approval_mode),
     )
 
   def on_mount(self) -> None:

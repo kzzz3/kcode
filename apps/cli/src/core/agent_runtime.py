@@ -373,3 +373,55 @@ class CliAgentRuntime(AgentRuntime):
     self._append_message(Message(role="assistant", content="Agent stopped after reaching max steps."))
     yield self.get_snapshot()
 
+
+  # ─── Public session management (for TUI and external callers) ──────
+
+  @property
+  def session(self) -> SessionRecord:
+    """Return the current session record."""
+    return self._session
+
+  @property
+  def session_store(self) -> SessionStore:
+    """Return the session store."""
+    return self._session_store
+
+  def new_session(self) -> SessionRecord:
+    """Create a fresh session and reset internal state."""
+    self._session = self._session_store.create_session(
+      workspace_root=self._workspace_root, title="tui-session",
+    )
+    self._bootstrap_messages()
+    return self._session
+
+  def load_session(self, session_id: str) -> SessionRecord | None:
+    """Load an existing session by id. Returns None if not found."""
+    session = self._session_store.get_session(session_id)
+    if session is None:
+      return None
+    self._session = session
+    # Replay stored messages into runtime
+    stored = self._session_store.get_messages(session_id)
+    self._messages = []
+    self._snapshot_messages = []
+    self._tool_runs = []
+    self._step_index = 0
+    self._state = AgentState.IDLE
+    # Re-bootstrap system prompt
+    if self._system_prompt:
+      self._append_message(Message(role="system", content=self._system_prompt), persist=False)
+    for mr in stored:
+      msg = Message(
+        role=mr.role,
+        content=mr.content,
+        tool_calls=mr.tool_calls,
+        tool_call_id=mr.tool_call_id,
+      )
+      self._append_message(msg, persist=False)
+    return session
+
+  def compact(self) -> bool:
+    """Manually trigger context compaction. Returns True if compacted."""
+    before = len(self._messages)
+    self._maybe_compact()
+    return len(self._messages) < before
