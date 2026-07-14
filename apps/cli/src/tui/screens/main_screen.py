@@ -1,10 +1,9 @@
-﻿"""Main TUI screen -- layout, streaming, tool approval, session management."""
+"""Main TUI screen -- layout, streaming, tool approval, session management."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import threading
-from pathlib import Path
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -20,9 +19,9 @@ from ..widgets.input_area import InputArea
 from ..widgets.status_bar import StatusBar
 from ..widgets.session_panel import SessionPanel
 from ..widgets.slash_overlay import SlashOverlay
-from ..widgets.slash_overlay import SlashCommand
 from ..utils.custom_commands import load_user_commands, load_project_commands
 from ..widgets.approval_dialog import ApprovalDialog
+from ..controllers.approval_controller import ApprovalController
 from .model_picker import ModelPicker
 from .help_screen import HelpScreen
 
@@ -65,8 +64,10 @@ class MainScreen(Screen):
     self._runtime = runtime
     self._is_streaming = False
     self._agent_step = 0
-    # P0 #3: Cancel event for background streaming thread
     self._cancel_event: threading.Event | None = None
+
+    mode_str = runtime._config.approval_mode if isinstance(runtime._config.approval_mode, str) else runtime._config.approval_mode.value
+    self._approval = ApprovalController(mode=mode_str)  # type: ignore[arg-type]
 
   def compose(self) -> ComposeResult:
     yield Header()
@@ -84,45 +85,37 @@ class MainScreen(Screen):
   def on_mount(self) -> None:
     """Initialize status bar with model info, load sessions, and wire custom commands."""
     status = self.query_one(StatusBar)
-    approval = self._runtime._config.approval_mode
     status.update_status(
       model_name=self._runtime._model_name,
       state="IDLE",
-      approval_mode=approval if isinstance(approval, str) else approval.value,
+      approval_mode=self._approval.mode,
     )
     self._refresh_sessions()
     self._load_custom_commands()
 
     # Wire approval callback into the runtime (P0 #3)
-    self._runtime._on_approve = self._on_approve_sync
+    self._approval._ask_approval = self._ask_approval_from_thread
+    self._runtime._on_approve = self._approval.request
 
     chat = self.query_one(ChatArea)
     chat.show_welcome()
 
   # ─── Approval gate (P0 #3) ────────────────────────────────────────
 
-  def _on_approve_sync(self, tool_name: str, safety_class: str, args: dict) -> bool:
-    """Synchronous approval callback called from the agent worker thread.
-
-    Uses a threading.Event to block the worker thread until the main
-    Textual event loop resolves the modal dialog.
-    """
-    if self._runtime._config.approval_mode == "auto":
-      return True
-
+  def _ask_approval_from_thread(self, req):
+    """Bridge worker-thread approval request to a Textual modal dialog."""
     result_holder: list[bool] = []
     ready = threading.Event()
 
     def _show_dialog() -> None:
       async def _inner() -> None:
         approved = await self.app.push_screen_wait(
-          ApprovalDialog(tool_name, args, safety_class)
+          ApprovalDialog(req.tool_name, req.arguments, req.safety_class)
         )
         result_holder.append(approved)
         ready.set()
       self.run_worker(_inner())
 
-    # Schedule dialog on the main event loop from the worker thread
     self.app.call_from_thread(_show_dialog)
     ready.wait(timeout=120)
     return result_holder[0] if result_holder else False
@@ -146,361 +139,263 @@ class MainScreen(Screen):
     """Arrow key navigation inside overlay."""
     overlay = self.query_one(SlashOverlay)
     if event.direction == "up":
-      overlay.move_up()
+      overlay.select_previous()
     else:
-      overlay.move_down()
+      overlay.select_next()
 
-  def on_input_area_confirm_slash(self, event: InputArea.ConfirmSlash) -> None:
-    """Tab or Enter while overlay is open -- confirm the selected command."""
+  def on_input_area_select_slash(self, event: InputArea.SelectSlash) -> None:
     overlay = self.query_one(SlashOverlay)
-    cmd_id, content = overlay.confirm_selection()
-    overlay.hide_overlay()
-    input_area = self.query_one(InputArea)
-    input_area.deactivate_slash_overlay()
-    input_area.clear_slash_text()
-    input_area.focus()
-    if cmd_id:
-      self._dispatch_command(cmd_id, content)
-
-  def _load_custom_commands(self) -> None:
-    """Load user-level and workspace-level custom commands into the overlay."""
-    try:
-      overlay = self.query_one(SlashOverlay)
-      workspace_root = Path(self._runtime._workspace_root)
-      user_cmds = load_user_commands()
-      project_cmds = load_project_commands(workspace_root)
-      custom: list[SlashCommand] = []
-      for cmd in (*user_cmds, *project_cmds):
-        custom.append(
-          SlashCommand(
-            id=cmd.id,
-            label=cmd.title,
-            description=cmd.description,
-            content=cmd.content,
-            category="Custom",
-            icon="#",
-            argument_names=cmd.argument_names,
-            is_custom=True,
-          )
-        )
-      overlay.set_custom_commands(custom)
-    except Exception as exc:
-      _log.debug("Custom commands load skipped: %s", exc)
-
-  def _dispatch_command(self, cmd_id: str, content: str | None) -> None:
-    """Dispatch a command, showing argument dialog if placeholders are present."""
-    if content:
-      placeholders = SlashOverlay.ArgumentDialog.extract_placeholders(content)
-      if placeholders:
-        self._show_argument_dialog(cmd_id, content, placeholders)
-        return
-    self._run_command(cmd_id, content=content)
-
-  def _show_argument_dialog(
-    self, cmd_id: str, content: str, arg_names: list[str]
-  ) -> None:
-    """Show a dialog for slash command arguments."""
-    try:
-      old = self.query_one("#arg-dialog")
-      old.remove()
-    except Exception:
-      pass
-    new_dialog = SlashOverlay.ArgumentDialog(cmd_id, arg_names, id="arg-dialog")
-    new_dialog._template_content = content
-    container = self.query_one("#chat-container")
-    container.mount(new_dialog)
-    new_dialog.add_class("visible")
-    new_dialog.focus()
-
-  def on_argument_dialog_args_submitted(
-    self, event: SlashOverlay.ArgumentDialog.ArgsSubmitted
-  ) -> None:
-    """User filled in arguments -- apply and execute."""
-    template = None
-    try:
-      dialog = self.query_one("#arg-dialog", SlashOverlay.ArgumentDialog)
-      template = getattr(dialog, "_template_content", None)
-      dialog.remove()
-    except Exception as exc:
-      _log.debug("Arg dialog dismiss: %s", exc)
-    if template:
-      resolved = SlashOverlay.ArgumentDialog.apply_arguments(template, event.args)
-      self._run_command(event.command_id, content=resolved)
-
-  def on_argument_dialog_cancelled(
-    self, event: SlashOverlay.ArgumentDialog.Cancelled
-  ) -> None:
-    """User cancelled the argument dialog."""
-    try:
-      dialog = self.query_one("#arg-dialog", SlashOverlay.ArgumentDialog)
-      dialog.remove()
-    except Exception:
-      pass
-    self.notify("Command cancelled.", severity="information")
-    input_area = self.query_one(InputArea)
-    input_area.focus()
+    overlay.apply_selected()
 
   def on_input_area_dismiss_slash(self, event: InputArea.DismissSlash) -> None:
-    """Escape while overlay is open -- dismiss it."""
     overlay = self.query_one(SlashOverlay)
     overlay.hide_overlay()
     input_area = self.query_one(InputArea)
-    input_area.deactivate_slash_overlay()
+    input_area.input.read_only = False
     input_area.focus()
 
-  def on_slash_overlay_command_selected(self, event: SlashOverlay.CommandSelected) -> None:
-    """Click on a slash command item -- execute it."""
+  def on_slash_overlay_slash_command(self, event: SlashOverlay.SlashCommand) -> None:
+    """Handle slash command selection."""
     overlay = self.query_one(SlashOverlay)
     overlay.hide_overlay()
     input_area = self.query_one(InputArea)
-    input_area.deactivate_slash_overlay()
-    input_area.clear_slash_text()
-    self._dispatch_command(event.command_id, event.content)
+    input_area.input.read_only = False
+    input_area.focus()
 
-  # ─── Text submission ────────────────────────────────────────────────
+    cmd = event.command
+    if cmd.handler:
+      if cmd.requires_input:
+        input_area.focus()
+      else:
+        if cmd.handler == "model_picker":
+          self._open_model_picker()
+        elif cmd.handler == "help":
+          self._show_help()
+        elif cmd.handler == "compact":
+          self._compact_context()
+        elif cmd.handler == "clear":
+          self.action_clear_chat()
+        elif cmd.handler == "sessions":
+          self._list_sessions()
+        elif cmd.handler == "doctor":
+          self._run_doctor()
+        elif cmd.handler == "theme":
+          self._cycle_theme()
+        elif cmd.handler == "approval":
+          self._toggle_approval()
+        elif cmd.handler == "sidebar":
+          self._toggle_sidebar()
 
-  def on_input_area_submitted(self, event: InputArea.Submitted) -> None:
-    """Handle user message submission."""
-    input_area = self.query_one(InputArea)
-    if input_area.is_slash_active:
+  # ─── Main send flow ────────────────────────────────────────────────
+
+  def on_input_area_user_message(self, event: InputArea.UserMessage) -> None:
+    """User submitted a message -- start streaming from the agent."""
+    text = event.text.strip()
+    if not text:
       return
-    if self._is_streaming:
-      self.notify("Agent is busy -- wait for it to finish.", severity="warning")
-      return
+
     chat = self.query_one(ChatArea)
-    chat.add_message(event.value, "user")
-    self.run_worker(self._stream_worker(event.value), exclusive=True)
-
-  def on_input_area_cancel_requested(self, event: InputArea.CancelRequested) -> None:
-    """Escape when overlay closed -- cancel streaming if active."""
-    if self._is_streaming:
-      if self._cancel_event:
-        self._cancel_event.set()
-      chat = self.query_one(ChatArea)
-      chat.cancel_stream()
-      self._is_streaming = False
-      status = self.query_one(StatusBar)
-      status.update_status(state="IDLE")
-      status.set_streaming_hint(False)
-      self.notify("Streaming cancelled")
-      input_area = self.query_one(InputArea)
-      input_area.focus()
-
-  # ─── Streaming agent loop (P0 #1 + #6: async-safe bridge) ─────────
-
-  async def _stream_worker(self, user_input: str) -> None:
-    """Run the sync generator in a background thread, consume via asyncio.Queue."""
-    self._is_streaming = True
-    cancel = threading.Event()
-    self._cancel_event = cancel
-
+    input_area = self.query_one(InputArea)
     status = self.query_one(StatusBar)
-    status.update_status(state="THINKING")
-    self._agent_step += 1
+
+    chat.add_message(text, "user")
+    input_area.clear()
+    input_area.show_thinking()
+    self._is_streaming = True
+    status.set_streaming_hint(True)
     status.set_step_count(self._agent_step)
 
+    self.run_worker(self._stream_agent(text))
+
+  async def _stream_agent(self, user_input: str) -> None:
+    """Async wrapper that consumes the sync step_stream() generator via a thread."""
     chat = self.query_one(ChatArea)
-    chat.start_stream("assistant")
-    status.set_streaming_hint(True)
-
-    # Queue bridges sync thread -> async consumer
-    queue: asyncio.Queue[StreamChunk | AgentSnapshot | None] = asyncio.Queue()
-    loop = asyncio.get_running_loop()
-
-    def _producer() -> None:
-      """Run the sync generator in a daemon thread."""
-      try:
-        for item in self._runtime.step_stream(user_input):
-          if cancel.is_set():
-            break
-          loop.call_soon_threadsafe(queue.put_nowait, item)
-      except Exception as exc:
-        # Signal error to consumer
-        loop.call_soon_threadsafe(queue.put_nowait, exc)
-      finally:
-        loop.call_soon_threadsafe(queue.put_nowait, None)
-
-    threading.Thread(target=_producer, daemon=True).start()
+    input_area = self.query_one(InputArea)
+    status = self.query_one(StatusBar)
 
     try:
-      while True:
-        item = await queue.get()
-        if item is None:
-          break
+      loop = asyncio.get_running_loop()
+      queue: asyncio.Queue[StreamChunk | AgentSnapshot | Exception | None] = asyncio.Queue()
+      cancel = threading.Event()
+      self._cancel_event = cancel
+      turn_id = id(cancel)
 
-        if isinstance(item, Exception):
-          raise item
+      def _producer() -> None:
+        try:
+          for item in self._runtime.step_stream(user_input):
+            if cancel.is_set():
+              break
+            loop.call_soon_threadsafe(queue.put_nowait, item)
+        except Exception as exc:
+          if not cancel.is_set():
+            loop.call_soon_threadsafe(queue.put_nowait, exc)
+        finally:
+          loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        if isinstance(item, StreamChunk):
-          if item.type == ChunkType.TEXT and item.delta:
-            chat.add_stream_chunk(item.delta)
-          elif item.type == ChunkType.TOOL_CALL_START:
-            chat.add_tool_call_start(
-              item.tool_name or "tool",
-              item.tool_call_id or "",
-            )
-            status.update_status(state="TOOL_RUNNING")
-          elif item.type == ChunkType.TOOL_CALL_ARGS and item.delta:
-            chat.add_tool_call_args(
-              item.tool_name or "tool",
-              item.delta,
-              tool_call_id=item.tool_call_id or "",
-            )
-          elif item.type == ChunkType.TOOL_CALL_END:
-            chat.add_tool_call_end(
-              item.tool_name or "tool",
-              item.tool_call_id or "",
-              result=item.delta or "",
-              is_error=False,
-            )
-            status.update_status(state="THINKING")
-
-        elif isinstance(item, AgentSnapshot):
-          chat.end_stream()
-          # P0 #2: Extract real fields from snapshot metadata
-          meta = item.metadata or {}
-          tokens = meta.get("token_count", 0) or 0
-          ctx = meta.get("context_utilization", 0.0) or 0.0
-          status.update_status(
-            state="IDLE",
-            tokens=tokens,
-            context_utilization=ctx,
-          )
-          status.set_streaming_hint(False)
+      threading.Thread(target=_producer, daemon=True).start()
+      await self._consume_queue(cancel, chat, status, input_area, turn_id, queue)
 
     except Exception as exc:
-      _log.error("Stream worker error: %s", exc)
-      chat.cancel_stream()
-      chat.add_message(f"Error: {exc}", "assistant")
-      status.update_status(state="IDLE")
-      status.set_streaming_hint(False)
+      _log.error("Streaming failed: %s", exc)
+      chat.add_message(f"Streaming failed: {exc}", "assistant")
     finally:
       self._is_streaming = False
       self._cancel_event = None
-      input_area = self.query_one(InputArea)
+      input_area.show_send()
       input_area.focus()
+      status.set_streaming_hint(False)
 
-  # ─── Session management (P0 #5: public API) ────────────────────────
+  async def _consume_queue(self, cancel, chat, status, input_area, turn_id, queue):
+    while True:
+      item = await queue.get()
+      if item is None:
+        break
+      if cancel.is_set():
+        chat.cancel_stream()
+        break
 
-  def _refresh_sessions(self) -> None:
-    """Reload sessions into the sidebar."""
-    try:
-      panel = self.query_one(SessionPanel)
-      sessions = self._runtime.session_store.list_sessions(limit=30)
-      panel.set_sessions(
-        [(s.id, s.title or s.id[:12]) for s in sessions]
-      )
-    except Exception as exc:
-      _log.debug("Session refresh failed: %s", exc)
+      if isinstance(item, Exception):
+        chat.cancel_stream()
+        chat.add_message(f"Agent error: {item}", "assistant")
+        break
 
-  def on_session_panel_new_session(self, event: SessionPanel.NewSession) -> None:
-    """Start a new session."""
-    self._runtime.new_session()
-    self._agent_step = 0
-    chat = self.query_one(ChatArea)
-    chat.clear()
-    self.notify("New session started")
-    self._refresh_sessions()
+      if isinstance(item, StreamChunk):
+        if item.type == ChunkType.TEXT and item.delta:
+          chat.add_stream_chunk(item.delta, turn_id)
+        elif item.type == ChunkType.TOOL_CALL_START:
+          chat.add_tool_call_start(
+            item.tool_name or "tool",
+            item.tool_call_id or "",
+            turn_id,
+          )
+        elif item.type == ChunkType.TOOL_CALL_ARGS and item.delta:
+          chat.add_tool_call_args(item.tool_call_id or "", item.delta, turn_id)
+        elif item.type == ChunkType.TOOL_CALL_END:
+          chat.add_tool_call_end(item.tool_call_id or "", item.delta or "", turn_id)
+          self._agent_step += 1
+          status.set_step_count(self._agent_step)
+      elif isinstance(item, AgentSnapshot):
+        chat.end_stream(turn_id)
+        status.set_step_count(self._agent_step)
+
+  # ─── Cancel ────────────────────────────────────────────────────────
+
+  def _handle_escape(self) -> None:
+    """Handle Escape key press."""
+    overlay = self.query_one(SlashOverlay)
+    if overlay.visible:
+      overlay.hide_overlay()
+      input_area = self.query_one(InputArea)
+      input_area.input.read_only = False
+      input_area.focus()
+      return
+
+    if self._is_streaming and self._cancel_event:
+      self._cancel_event.set()
+      chat = self.query_one(ChatArea)
+      chat.cancel_stream()
+      status = self.query_one(StatusBar)
+      status.set_streaming_hint(False)
+      self._is_streaming = False
+      self.notify("Cancelled")
+      return
+
+  def on_key(self, event) -> None:
+    if event.key == "escape":
+      self._handle_escape()
+      event.prevent_default()
+
+  # ─── Session management ────────────────────────────────────────────
 
   def on_session_panel_session_selected(self, event: SessionPanel.SessionSelected) -> None:
-    """Load a previous session."""
+    """Load a session from the sidebar."""
+    session_id = event.session_id
     try:
-      session = self._runtime.load_session(event.session_id)
-      if session is None:
-        self.notify("Session not found", severity="warning")
-        return
-
+      session = self._runtime.load_session(session_id)
       chat = self.query_one(ChatArea)
       chat.clear()
-
-      # Display stored messages in chat
-      stored = self._runtime.session_store.get_messages(event.session_id)
-      for mr in stored:
-        if mr.role == "user" and mr.content:
-          chat.add_message(mr.content, "user")
-        elif mr.role == "assistant" and mr.content:
-          chat.add_message(mr.content, "assistant")
-
-      self._agent_step = 0
-      self.notify(f"Loaded session {event.session_id[:8]}")
+      for msg in session.messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if content and role in ("user", "assistant"):
+          chat.add_message(content, role)
+      self.notify(f"Session {session_id[:8]} loaded")
     except Exception as exc:
-      _log.error("Session load failed: %s", exc)
+      _log.error("Failed to load session %s: %s", session_id, exc)
       self.notify(f"Failed to load session: {exc}", severity="error")
 
+  def on_session_panel_new_session(self, event: SessionPanel.NewSession) -> None:
+    """Create a new session."""
+    try:
+      self._runtime.new_session()
+      chat = self.query_one(ChatArea)
+      chat.clear()
+      self._agent_step = 0
+      status = self.query_one(StatusBar)
+      status.set_step_count(0)
+      self._refresh_sessions()
+      self.notify("New session created")
+    except Exception as exc:
+      _log.error("Failed to create session: %s", exc)
+      self.notify(f"Failed to create session: {exc}", severity="error")
+
   def on_session_panel_refresh_sessions(self, event: SessionPanel.RefreshSessions) -> None:
-    """Handle refresh request."""
     self._refresh_sessions()
 
-  # ─── Slash command execution ────────────────────────────────────────
-
-  def _run_command(self, cmd_id: str, *, content: str | None = None) -> None:
-    """Execute a slash command by id."""
-    if cmd_id.startswith("user:") or cmd_id.startswith("project:"):
-      if content:
-        self._run_custom_command(content)
-        return
-      self.notify(f"Custom command {cmd_id} has no content", severity="warning")
-      return
-
-    dispatch = {
-      "new":       self.action_new_session,
-      "refresh":   self._refresh_sessions,
-      "sidebar":   self._toggle_sidebar,
-      "clear":     self.action_clear_chat,
-      "model":     self._open_model_picker,
-      "model_picker": self.action_model_picker,
-      "approval":  self._toggle_approval,
-      "theme":     self._cycle_theme,
-      "help":      self._show_help,
-      "compact":   self._compact_context,
-      "sessions":  self._list_sessions,
-      "doctor":    self._run_doctor,
-      "init":      self._run_init,
-      "quit":      self.action_quit,
-    }
-    handler = dispatch.get(cmd_id)
-    if handler:
-      handler()
-    else:
-      self.notify(f"Unknown command: {cmd_id}", severity="warning")
-
-  def _run_custom_command(self, content: str) -> None:
-    """Send custom command content as a user message to the agent."""
-    if self._is_streaming:
-      self.notify("Agent is busy -- wait for it to finish.", severity="warning")
-      return
-    chat = self.query_one(ChatArea)
-    chat.add_message(content, "user")
-    self.run_worker(self._stream_worker(content), exclusive=True)
-
-  def _run_init(self) -> None:
-    """Initialize .kcode/ workspace."""
+  def _refresh_sessions(self) -> None:
     try:
-      from apps.cli.src.commands.init import run_init
-      ws = self._runtime._workspace_root
-      run_init(ws)
-      self.notify(f"Initialized .kcode/ in {ws}")
+      sessions = self._runtime.session_store.list_sessions()
+      panel = self.query_one(SessionPanel)
+      current_id = self._runtime.session.session_id if self._runtime.session else None
+      session_data = []
+      for s in sessions[:50]:
+        session_data.append({
+          "id": s.session_id,
+          "title": s.title or "Untitled",
+          "updated_at": s.updated_at,
+          "message_count": s.message_count,
+          "is_current": s.session_id == current_id,
+        })
+      panel.set_sessions(session_data)
     except Exception as exc:
-      _log.error("Init failed: %s", exc)
-      self.notify(f"Init failed: {exc}", severity="error")
+      _log.error("Failed to refresh sessions: %s", exc)
+
+  # ─── Custom commands ───────────────────────────────────────────────
+
+  def _load_custom_commands(self) -> None:
+    try:
+      overlay = self.query_one(SlashOverlay)
+      project = load_project_commands(self._runtime._workspace_root)
+      user = load_user_commands()
+      overlay.add_commands(project + user)
+    except Exception as exc:
+      _log.error("Failed to load custom commands: %s", exc)
+
+  # ─── Sidebar toggle ───────────────────────────────────────────────
 
   def _toggle_sidebar(self) -> None:
-    """Toggle sidebar visibility."""
     sidebar = self.query_one("#sidebar")
     sidebar.display = not sidebar.display
+    self.notify("Sidebar " + ("shown" if sidebar.display else "hidden"))
 
-  def action_clear_chat(self) -> None:
-    """Clear the chat area."""
-    chat = self.query_one(ChatArea)
-    chat.clear()
-    self.notify("Chat cleared")
+  # ─── Model picker ─────────────────────────────────────────────────
+
+  def _list_available_models(self) -> list[str]:
+    try:
+      from apps.cli.src.config.resolution import resolve_config
+      config = resolve_config(self._runtime._workspace_root)
+      models = config.model.extra.get("models", [])
+      if isinstance(models, list) and models:
+        return [str(m) for m in models]
+    except Exception:
+      pass
+    current = self._runtime._model_name
+    return [current] if current else ["gpt-4o"]
 
   def _open_model_picker(self) -> None:
-    """Open the model picker modal."""
     self.action_model_picker()
 
   def action_model_picker(self) -> None:
-    """Open the model picker modal."""
     async def _run() -> None:
       current = self._runtime._model_name
       models = self._list_available_models()
@@ -514,32 +409,15 @@ class MainScreen(Screen):
       input_area.focus()
     self.run_worker(_run())
 
-  def _list_available_models(self) -> list[str]:
-    """Return list of available model names."""
-    try:
-      from apps.cli.src.config.resolution import resolve_config
-      config = resolve_config(self._runtime._workspace_root)
-      models = config.model.extra.get("models", [])
-      if isinstance(models, list) and models:
-        return [str(m) for m in models]
-    except Exception:
-      pass
-    current = self._runtime._model_name
-    return [current] if current else ["gpt-4o"]
-
   def _toggle_approval(self) -> None:
-    """Toggle between manual and auto approval mode."""
-    current = self._runtime._config.approval_mode
-    current_str = current if isinstance(current, str) else current.value
-    new_mode = "manual" if current_str == "auto" else "auto"
-    from packages.core.src.config.loader import ApprovalMode
-    self._runtime._config.approval_mode = ApprovalMode(new_mode)
+    current = self._approval.mode
+    new_mode = "manual" if current == "auto" else "auto"
+    self._approval.mode = new_mode  # type: ignore[assignment]
     status = self.query_one(StatusBar)
     status.update_status(approval_mode=new_mode)
     self.notify(f"Approval mode: {new_mode}")
 
   def _cycle_theme(self) -> None:
-    """Cycle through available themes."""
     themes = self.app.available_themes
     names = [t.name for t in themes] if themes else []
     if not names:
@@ -555,7 +433,6 @@ class MainScreen(Screen):
     self.notify(f"Theme: {next_theme}")
 
   def _show_help(self) -> None:
-    """Show the help screen."""
     async def _show() -> None:
       await self.app.push_screen_wait(HelpScreen())
       input_area = self.query_one(InputArea)
@@ -563,7 +440,6 @@ class MainScreen(Screen):
     self.run_worker(_show())
 
   def _compact_context(self) -> None:
-    """Compact the conversation context."""
     try:
       if self._runtime.compact():
         self.notify("Context compacted")
@@ -574,7 +450,6 @@ class MainScreen(Screen):
       self.notify(f"Compact failed: {exc}", severity="error")
 
   def _list_sessions(self) -> None:
-    """Show sessions info in the sidebar."""
     sidebar = self.query_one("#sidebar")
     if not sidebar.display:
       sidebar.display = True
@@ -582,7 +457,6 @@ class MainScreen(Screen):
     self.notify("Sessions refreshed")
 
   def _run_doctor(self) -> None:
-    """Run a quick health check and show result."""
     from apps.cli.src.commands.doctor import run_doctor
     chat = self.query_one(ChatArea)
     try:
@@ -599,10 +473,7 @@ class MainScreen(Screen):
       _log.error("Doctor check failed: %s", exc)
       chat.add_message(f"Doctor check failed: {exc}", "assistant")
 
-  # ─── Actions ────────────────────────────────────────────────────────
-
   def action_new_session(self) -> None:
-    """Ctrl+N -- create a new session and reset step counter."""
     self._agent_step = 0
     self.on_session_panel_new_session(SessionPanel.NewSession())
 
@@ -613,7 +484,6 @@ class MainScreen(Screen):
     self._show_help()
 
   def action_command_palette(self) -> None:
-    """Ctrl+K -- open the slash overlay as a command palette."""
     input_area = self.query_one(InputArea)
     input_area.focus()
     overlay = self.query_one(SlashOverlay)
@@ -621,7 +491,6 @@ class MainScreen(Screen):
     input_area.activate_slash_overlay()
 
   def action_compact(self) -> None:
-    """Compact the conversation context."""
     self._compact_context()
 
   def action_quit(self) -> None:
