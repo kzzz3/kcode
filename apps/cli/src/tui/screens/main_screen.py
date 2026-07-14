@@ -1,4 +1,4 @@
-"""Main TUI screen -- layout, streaming, tool approval, session management."""
+﻿"""Main TUI screen -- layout, streaming, tool approval, session management."""
 from __future__ import annotations
 
 import asyncio
@@ -350,11 +350,11 @@ class MainScreen(Screen):
       session_data = []
       for s in sessions[:50]:
         session_data.append({
-          "id": s.session_id,
+          "id": s.id,
           "title": s.title or "Untitled",
           "updated_at": s.updated_at,
-          "message_count": s.message_count,
-          "is_current": s.session_id == current_id,
+          "message_count": 0,
+          "is_current": s.id == current_id,
         })
       panel.set_sessions(session_data)
     except Exception as exc:

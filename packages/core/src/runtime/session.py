@@ -228,6 +228,16 @@ class SessionStore:
     self._conn.commit()
     return ToolRunRecord(id=row[0], session_id=row[1], message_id=row[2], tool_name=row[3], input=_loads(row[4]) or {}, output=output, status=status, started_at=row[7], completed_at=now, metadata=_loads(row[9]) or {})
 
+  def get_message_counts(self, session_ids: list[str]) -> dict[str, int]:
+    """Return message counts for the given session ids."""
+    if not session_ids:
+      return {}
+    placeholders = ",".join("?" for _ in session_ids)
+    rows = self._conn.execute(
+      f"SELECT session_id, COUNT(*) FROM messages WHERE session_id IN ({placeholders}) GROUP BY session_id",
+      session_ids,
+    ).fetchall()
+    return {r[0]: r[1] for r in rows}
   def get_messages(self, session_id: str, limit: int | None = None) -> list[MessageRecord]:
     query = "SELECT id, session_id, role, content, tool_calls, tool_call_id, created_at, metadata FROM messages WHERE session_id=? ORDER BY created_at, id"
     params: tuple[Any, ...] = (session_id,)
