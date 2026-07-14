@@ -1,17 +1,13 @@
-﻿"""Main TUI screen -- layout, streaming, tool approval, session management."""
+﻿"""Main TUI screen -- thin orchestrator wired to controllers."""
 from __future__ import annotations
 
-import asyncio
 import logging
-import threading
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Header, Footer
 
-from packages.core.src.models.interfaces import StreamChunk, ChunkType
-from packages.core.src.runtime.contracts import AgentSnapshot
 from apps.cli.src.core.agent_runtime import CliAgentRuntime
 
 from ..widgets.chat_area import ChatArea
@@ -23,6 +19,8 @@ from ..utils.custom_commands import load_user_commands, load_project_commands
 from ..widgets.approval_dialog import ApprovalDialog
 from ..controllers.approval_controller import ApprovalController
 from ..controllers.session_controller import SessionController
+from ..controllers.turn_controller import TurnController, TurnCallbacks
+from ..controllers.tool_controller import ToolController
 from .model_picker import ModelPicker
 from .help_screen import HelpScreen
 
@@ -65,53 +63,53 @@ class MainScreen(Screen):
     self._runtime = runtime
     self._is_streaming = False
     self._agent_step = 0
-    self._cancel_event: threading.Event | None = None
 
-    mode_str = runtime._config.approval_mode if isinstance(runtime._config.approval_mode, str) else runtime._config.approval_mode.value
-    self._approval = ApprovalController(mode=mode_str)  # type: ignore[arg-type]
-
+    # ── Controllers ────────────────────────────────────────────────
+    self._approval = ApprovalController(mode="manual")
     self._sessions = SessionController(
       runtime,
       on_sessions_changed=self._on_sessions_updated,
       on_session_loaded=self._on_session_loaded,
       on_error=lambda msg: self.notify(msg, severity="error"),
     )
+    self._tools = ToolController(
+      runtime,
+      self._approval,
+      on_notify=lambda msg, sev: self.notify(msg, severity=sev),
+      on_model_changed=self._on_model_changed,
+      on_approval_toggled=self._on_approval_toggled,
+      on_doctor_output=self._on_doctor_output,
+    )
+    self._turn: TurnController | None = None
+
+  # ── Compose ──────────────────────────────────────────────────────
 
   def compose(self) -> ComposeResult:
     yield Header()
     with Horizontal(id="main-container"):
+      yield SessionPanel(id="sidebar")
       with Vertical(id="chat-container"):
-        yield ChatArea()
+        yield ChatArea(id="chat")
         with Vertical(id="input-wrapper"):
-          yield SlashOverlay()
-          yield InputArea()
-      with Vertical(id="sidebar"):
-        yield SessionPanel()
-    yield StatusBar()
+          yield SlashOverlay(id="slash-overlay")
+          yield InputArea(id="input")
+    yield StatusBar(id="status")
     yield Footer()
 
   def on_mount(self) -> None:
-    """Initialize status bar with model info, load sessions, and wire custom commands."""
-    status = self.query_one(StatusBar)
-    status.update_status(
-      model_name=self._runtime._model_name,
-      state="IDLE",
-      approval_mode=self._approval.mode,
-    )
-    self._sessions.refresh()
-    self._load_custom_commands()
-
-    # Wire approval callback into the runtime (P0 #3)
+    # Wire approval callback into the runtime
     self._approval._ask_approval = self._ask_approval_from_thread
     self._runtime._on_approve = self._approval.request
-
+    self._sessions.refresh()
+    self._load_custom_commands()
     chat = self.query_one(ChatArea)
     chat.show_welcome()
 
-  # ─── Approval gate (P0 #3) ────────────────────────────────────────
+  # ── Approval bridge ──────────────────────────────────────────────
 
   def _ask_approval_from_thread(self, req):
     """Bridge worker-thread approval request to a Textual modal dialog."""
+    import threading
     result_holder: list[bool] = []
     ready = threading.Event()
 
@@ -128,23 +126,102 @@ class MainScreen(Screen):
     ready.wait(timeout=120)
     return result_holder[0] if result_holder else False
 
-  # ─── Slash overlay integration ─────────────────────────────────────
+  # ── Turn controller callbacks ────────────────────────────────────
+
+  def _build_turn_callbacks(self) -> TurnCallbacks:
+    chat = self.query_one(ChatArea)
+    status = self.query_one(StatusBar)
+
+    def on_text(event):
+      chat.add_stream_chunk(event.delta, event.turn_id)
+
+    def on_tool_start(event):
+      chat.add_tool_call_start(event.tool_name, event.tool_call_id, event.turn_id)
+
+    def on_tool_args(event):
+      chat.add_tool_call_args(event.tool_call_id, event.delta, event.turn_id)
+
+    def on_tool_end(event):
+      chat.add_tool_call_end(event.tool_call_id, event.result, event.turn_id)
+      self._agent_step += 1
+      status.set_step_count(self._agent_step)
+
+    def on_finished(event):
+      chat.end_stream(event.turn_id)
+      status.set_step_count(self._agent_step)
+
+    def on_failed(event):
+      chat.cancel_stream()
+      chat.add_message(f"Agent error: {event.message}", "assistant")
+
+    return TurnCallbacks(
+      on_text=on_text,
+      on_tool_start=on_tool_start,
+      on_tool_args=on_tool_args,
+      on_tool_end=on_tool_end,
+      on_finished=on_finished,
+      on_failed=on_failed,
+    )
+
+  # ── Session callbacks ────────────────────────────────────────────
+
+  def _on_sessions_updated(self, infos):
+    panel = self.query_one(SessionPanel)
+    panel.set_sessions([
+      {
+        "id": info.id,
+        "title": info.title,
+        "updated_at": info.updated_at,
+        "message_count": info.message_count,
+        "is_current": info.is_current,
+      }
+      for info in infos
+    ])
+
+  def _on_session_loaded(self, session_id, messages):
+    chat = self.query_one(ChatArea)
+    chat.clear()
+    self._agent_step = 0
+    status = self.query_one(StatusBar)
+    status.set_step_count(0)
+    for msg in messages:
+      role = msg.get("role", "user")
+      content = msg.get("content", "")
+      if content and role in ("user", "assistant"):
+        chat.add_message(content, role)
+    if session_id:
+      self.notify(f"Session {session_id[:8]} loaded")
+
+  # ── Tool callbacks ───────────────────────────────────────────────
+
+  def _on_model_changed(self, model_name: str) -> None:
+    status = self.query_one(StatusBar)
+    status.update_status(model_name=model_name)
+    self.notify(f"Model: {model_name}")
+
+  def _on_approval_toggled(self, mode: str) -> None:
+    status = self.query_one(StatusBar)
+    status.update_status(approval_mode=mode)
+    self.notify(f"Approval mode: {mode}")
+
+  def _on_doctor_output(self, summary: str) -> None:
+    chat = self.query_one(ChatArea)
+    chat.add_message(f"**Doctor Results:**\n```\n{summary}\n```", "assistant")
+
+  # ── Slash overlay integration ────────────────────────────────────
 
   def on_input_area_open_slash_overlay(self, event: InputArea.OpenSlashOverlay) -> None:
-    """User typed '/' -- show the inline overlay."""
     overlay = self.query_one(SlashOverlay)
     overlay.show_overlay(event.query)
     input_area = self.query_one(InputArea)
     input_area.activate_slash_overlay()
 
   def on_input_area_update_slash_filter(self, event: InputArea.UpdateSlashFilter) -> None:
-    """User typed more after '/' -- update overlay filter."""
     overlay = self.query_one(SlashOverlay)
     if overlay.visible:
       overlay.update_filter(event.query)
 
   def on_input_area_navigate_slash(self, event: InputArea.NavigateSlash) -> None:
-    """Arrow key navigation inside overlay."""
     overlay = self.query_one(SlashOverlay)
     if event.direction == "up":
       overlay.select_previous()
@@ -163,7 +240,6 @@ class MainScreen(Screen):
     input_area.focus()
 
   def on_slash_overlay_slash_command(self, event: SlashOverlay.SlashCommand) -> None:
-    """Handle slash command selection."""
     overlay = self.query_one(SlashOverlay)
     overlay.hide_overlay()
     input_area = self.query_one(InputArea)
@@ -175,121 +251,60 @@ class MainScreen(Screen):
       if cmd.requires_input:
         input_area.focus()
       else:
-        if cmd.handler == "model_picker":
+        result = self._tools.dispatch_slash(cmd.handler)
+        if result == "open_model_picker":
           self._open_model_picker()
-        elif cmd.handler == "help":
+        elif result == "show_help":
           self._show_help()
-        elif cmd.handler == "compact":
-          self._compact_context()
-        elif cmd.handler == "clear":
+        elif result == "clear_chat":
           self.action_clear_chat()
-        elif cmd.handler == "sessions":
+        elif result == "list_sessions":
           self._list_sessions()
-        elif cmd.handler == "doctor":
-          self._run_doctor()
-        elif cmd.handler == "theme":
+        elif result == "cycle_theme":
           self._cycle_theme()
-        elif cmd.handler == "approval":
-          self._toggle_approval()
-        elif cmd.handler == "sidebar":
+        elif result == "toggle_sidebar":
           self._toggle_sidebar()
 
-  # ─── Main send flow ────────────────────────────────────────────────
+  # ── Main send flow ───────────────────────────────────────────────
 
   def on_input_area_user_message(self, event: InputArea.UserMessage) -> None:
-    """User submitted a message -- start streaming from the agent."""
     text = event.text.strip()
     if not text:
       return
-
     chat = self.query_one(ChatArea)
     input_area = self.query_one(InputArea)
     status = self.query_one(StatusBar)
-
     chat.add_message(text, "user")
     input_area.clear()
     input_area.show_thinking()
     self._is_streaming = True
     status.set_streaming_hint(True)
     status.set_step_count(self._agent_step)
-
     self.run_worker(self._stream_agent(text))
 
   async def _stream_agent(self, user_input: str) -> None:
-    """Async wrapper that consumes the sync step_stream() generator via a thread."""
     chat = self.query_one(ChatArea)
     input_area = self.query_one(InputArea)
     status = self.query_one(StatusBar)
-
     try:
+      import asyncio
       loop = asyncio.get_running_loop()
-      queue: asyncio.Queue[StreamChunk | AgentSnapshot | Exception | None] = asyncio.Queue()
-      cancel = threading.Event()
-      self._cancel_event = cancel
-      turn_id = id(cancel)
-
-      def _producer() -> None:
-        try:
-          for item in self._runtime.step_stream(user_input):
-            if cancel.is_set():
-              break
-            loop.call_soon_threadsafe(queue.put_nowait, item)
-        except Exception as exc:
-          if not cancel.is_set():
-            loop.call_soon_threadsafe(queue.put_nowait, exc)
-        finally:
-          loop.call_soon_threadsafe(queue.put_nowait, None)
-
-      threading.Thread(target=_producer, daemon=True).start()
-      await self._consume_queue(cancel, chat, status, input_area, turn_id, queue)
-
+      callbacks = self._build_turn_callbacks()
+      self._turn = TurnController(self._runtime, callbacks, loop)
+      await self._turn.start(user_input)
     except Exception as exc:
       _log.error("Streaming failed: %s", exc)
       chat.add_message(f"Streaming failed: {exc}", "assistant")
     finally:
       self._is_streaming = False
-      self._cancel_event = None
+      self._turn = None
       input_area.show_send()
       input_area.focus()
       status.set_streaming_hint(False)
 
-  async def _consume_queue(self, cancel, chat, status, input_area, turn_id, queue):
-    while True:
-      item = await queue.get()
-      if item is None:
-        break
-      if cancel.is_set():
-        chat.cancel_stream()
-        break
-
-      if isinstance(item, Exception):
-        chat.cancel_stream()
-        chat.add_message(f"Agent error: {item}", "assistant")
-        break
-
-      if isinstance(item, StreamChunk):
-        if item.type == ChunkType.TEXT and item.delta:
-          chat.add_stream_chunk(item.delta, turn_id)
-        elif item.type == ChunkType.TOOL_CALL_START:
-          chat.add_tool_call_start(
-            item.tool_name or "tool",
-            item.tool_call_id or "",
-            turn_id,
-          )
-        elif item.type == ChunkType.TOOL_CALL_ARGS and item.delta:
-          chat.add_tool_call_args(item.tool_call_id or "", item.delta, turn_id)
-        elif item.type == ChunkType.TOOL_CALL_END:
-          chat.add_tool_call_end(item.tool_call_id or "", item.delta or "", turn_id)
-          self._agent_step += 1
-          status.set_step_count(self._agent_step)
-      elif isinstance(item, AgentSnapshot):
-        chat.end_stream(turn_id)
-        status.set_step_count(self._agent_step)
-
-  # ─── Cancel ────────────────────────────────────────────────────────
+  # ── Cancel ───────────────────────────────────────────────────────
 
   def _handle_escape(self) -> None:
-    """Handle Escape key press."""
     overlay = self.query_one(SlashOverlay)
     if overlay.visible:
       overlay.hide_overlay()
@@ -298,77 +313,32 @@ class MainScreen(Screen):
       input_area.focus()
       return
 
-    if self._is_streaming and self._cancel_event:
-      self._cancel_event.set()
+    if self._is_streaming and self._turn:
+      self._turn.cancel()
       chat = self.query_one(ChatArea)
       chat.cancel_stream()
       status = self.query_one(StatusBar)
       status.set_streaming_hint(False)
       self._is_streaming = False
       self.notify("Cancelled")
-      return
 
   def on_key(self, event) -> None:
     if event.key == "escape":
       self._handle_escape()
       event.prevent_default()
 
-  # ─── Session management ────────────────────────────────────────────
+  # ── Session events ───────────────────────────────────────────────
 
   def on_session_panel_session_selected(self, event: SessionPanel.SessionSelected) -> None:
-    """Load a session from the sidebar."""
-    session_id = event.session_id
-    try:
-      session = self._runtime.load_session(session_id)
-      chat = self.query_one(ChatArea)
-      chat.clear()
-      for msg in session.messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        if content and role in ("user", "assistant"):
-          chat.add_message(content, role)
-      self.notify(f"Session {session_id[:8]} loaded")
-    except Exception as exc:
-      _log.error("Failed to load session %s: %s", session_id, exc)
-      self.notify(f"Failed to load session: {exc}", severity="error")
+    self._sessions.load(event.session_id)
 
   def on_session_panel_new_session(self, event: SessionPanel.NewSession) -> None:
-    """Create a new session."""
-    try:
-      self._runtime.new_session()
-      chat = self.query_one(ChatArea)
-      chat.clear()
-      self._agent_step = 0
-      status = self.query_one(StatusBar)
-      status.set_step_count(0)
-      self._sessions.refresh()
-      self.notify("New session created")
-    except Exception as exc:
-      _log.error("Failed to create session: %s", exc)
-      self.notify(f"Failed to create session: {exc}", severity="error")
+    self._sessions.create_new()
 
   def on_session_panel_refresh_sessions(self, event: SessionPanel.RefreshSessions) -> None:
     self._sessions.refresh()
 
-  def _refresh_sessions(self) -> None:
-    try:
-      sessions = self._runtime.session_store.list_sessions()
-      panel = self.query_one(SessionPanel)
-      current_id = self._runtime.session.session_id if self._runtime.session else None
-      session_data = []
-      for s in sessions[:50]:
-        session_data.append({
-          "id": s.id,
-          "title": s.title or "Untitled",
-          "updated_at": s.updated_at,
-          "message_count": 0,
-          "is_current": s.id == current_id,
-        })
-      panel.set_sessions(session_data)
-    except Exception as exc:
-      _log.error("Failed to refresh sessions: %s", exc)
-
-  # ─── Custom commands ───────────────────────────────────────────────
+  # ── Custom commands ──────────────────────────────────────────────
 
   def _load_custom_commands(self) -> None:
     try:
@@ -379,51 +349,26 @@ class MainScreen(Screen):
     except Exception as exc:
       _log.error("Failed to load custom commands: %s", exc)
 
-  # ─── Sidebar toggle ───────────────────────────────────────────────
+  # ── UI helpers ───────────────────────────────────────────────────
 
   def _toggle_sidebar(self) -> None:
     sidebar = self.query_one("#sidebar")
     sidebar.display = not sidebar.display
     self.notify("Sidebar " + ("shown" if sidebar.display else "hidden"))
 
-  # ─── Model picker ─────────────────────────────────────────────────
-
-  def _list_available_models(self) -> list[str]:
-    try:
-      from apps.cli.src.config.resolution import resolve_config
-      config = resolve_config(self._runtime._workspace_root)
-      models = config.model.extra.get("models", [])
-      if isinstance(models, list) and models:
-        return [str(m) for m in models]
-    except Exception:
-      pass
-    current = self._runtime._model_name
-    return [current] if current else ["gpt-4o"]
-
   def _open_model_picker(self) -> None:
     self.action_model_picker()
 
   def action_model_picker(self) -> None:
     async def _run() -> None:
-      current = self._runtime._model_name
-      models = self._list_available_models()
+      current = self._tools.current_model
+      models = self._tools.list_models()
       chosen = await self.app.push_screen_wait(ModelPicker(models, current))
       if chosen and chosen != current:
-        self._runtime._model_name = chosen
-        status = self.query_one(StatusBar)
-        status.update_status(model_name=chosen)
-        self.notify(f"Model: {chosen}")
+        self._tools.set_model(chosen)
       input_area = self.query_one(InputArea)
       input_area.focus()
     self.run_worker(_run())
-
-  def _toggle_approval(self) -> None:
-    current = self._approval.mode
-    new_mode = "manual" if current == "auto" else "auto"
-    self._approval.mode = new_mode  # type: ignore[assignment]
-    status = self.query_one(StatusBar)
-    status.update_status(approval_mode=new_mode)
-    self.notify(f"Approval mode: {new_mode}")
 
   def _cycle_theme(self) -> None:
     themes = self.app.available_themes
@@ -447,39 +392,12 @@ class MainScreen(Screen):
       input_area.focus()
     self.run_worker(_show())
 
-  def _compact_context(self) -> None:
-    try:
-      if self._runtime.compact():
-        self.notify("Context compacted")
-      else:
-        self.notify("Nothing to compact")
-    except Exception as exc:
-      _log.error("Compact failed: %s", exc)
-      self.notify(f"Compact failed: {exc}", severity="error")
-
   def _list_sessions(self) -> None:
     sidebar = self.query_one("#sidebar")
     if not sidebar.display:
       sidebar.display = True
     self._sessions.refresh()
     self.notify("Sessions refreshed")
-
-  def _run_doctor(self) -> None:
-    from apps.cli.src.commands.doctor import run_doctor
-    chat = self.query_one(ChatArea)
-    try:
-      import io
-      import contextlib
-      buf = io.StringIO()
-      with contextlib.redirect_stdout(buf):
-        run_doctor()
-      output = buf.getvalue()
-      lines = output.strip().split("\n")
-      summary = "\n".join(lines[:20])
-      chat.add_message(f"**Doctor Results:**\n```\n{summary}\n```", "assistant")
-    except Exception as exc:
-      _log.error("Doctor check failed: %s", exc)
-      chat.add_message(f"Doctor check failed: {exc}", "assistant")
 
   def action_new_session(self) -> None:
     self._agent_step = 0
@@ -501,7 +419,7 @@ class MainScreen(Screen):
     input_area.activate_slash_overlay()
 
   def action_compact(self) -> None:
-    self._compact_context()
+    self._tools.compact_context()
 
   def action_quit(self) -> None:
     self.app.exit()
