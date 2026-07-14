@@ -1,9 +1,7 @@
 ﻿"""Tests for SessionController."""
 from __future__ import annotations
 
-import pytest
 from unittest.mock import MagicMock
-from pathlib import Path
 
 from apps.cli.src.tui.controllers.session_controller import SessionController, SessionInfo
 from packages.core.src.runtime.session import SessionRecord
