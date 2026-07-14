@@ -131,7 +131,11 @@ class MainScreen(Screen):
     self._runtime._on_approve = self._approval.request
     self._sessions.refresh()
     self._load_custom_commands()
-    self.query_one(ChatArea).show_welcome()
+    self.query_one(ChatArea).show_welcome(
+        workspace=str(getattr(self._runtime, '_workspace_root', '')),
+        model=getattr(self._runtime, '_model', ''),
+        approval=getattr(self._approval, 'mode', 'manual'),
+      )
     self._apply_responsive_class()
 
   # ── Responsive layout ────────────────────────────────────────────
@@ -321,7 +325,7 @@ class MainScreen(Screen):
   def _load_custom_commands(self) -> None:
     try:
       overlay = self.query_one(SlashOverlay)
-      overlay.add_commands(
+      overlay.set_custom_commands(
         load_project_commands(self._runtime._workspace_root) + load_user_commands()
       )
     except Exception as exc:
@@ -405,8 +409,8 @@ class MainScreen(Screen):
 
   # ── Controller callbacks ─────────────────────────────────────────
 
-  def _on_sessions_updated(self) -> None:
-    sessions = self._sessions.list_sessions()
+  def _on_sessions_updated(self, infos: list | None = None) -> None:
+    sessions = infos if infos is not None else self._sessions.list_sessions()
     self.query_one(SessionPanel).refresh_list(sessions)
 
   def _on_session_loaded(self, title: str) -> None:
