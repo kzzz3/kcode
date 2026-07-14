@@ -1,4 +1,4 @@
-﻿"""Inline slash-command autocomplete overlay -- dropdown below InputArea.
+"""Inline slash-command autocomplete overlay -- dropdown below InputArea.
 
 Inspired by OpenCode/Crush command palette: typed '/' opens a non-modal
 overlay that filters in real time, grouped by category with icons, aliases,
@@ -347,6 +347,12 @@ class SlashOverlay(Widget):
       )
       self._update_selection()
       self._scroll_to_selected()
+
+  def select_current(self) -> None:
+    """Alias for confirm_selection that posts CommandSelected message."""
+    cmd_id, content = self.confirm_selection()
+    if cmd_id:
+      self.post_message(self.CommandSelected(cmd_id, content))
 
   def confirm_selection(self) -> tuple[str | None, str | None]:
     """Confirm selection -- returns (command_id, content) or (None, None)."""

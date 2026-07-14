@@ -1,6 +1,6 @@
-"""Main TUI screen -- thin orchestrator wired to controllers.
+﻿"""Main TUI screen -- thin orchestrator wired to controllers.
 
-Uses external theme.tcss + workbench.tcss for styling.
+Uses external kcode.tcss for styling.
 Responsive layout: narrow (<90), medium (90-139), wide (>=140).
 """
 from __future__ import annotations
@@ -110,7 +110,7 @@ class MainScreen(Screen):
     )
     self._turn: TurnController | None = None
 
-  # ── Compose ──────────────────────────────────────────────────────
+  # -- Compose ------------------------------------------------------
 
   def compose(self) -> ComposeResult:
     yield WorkspaceBar(
@@ -132,13 +132,13 @@ class MainScreen(Screen):
     self._sessions.refresh()
     self._load_custom_commands()
     self.query_one(ChatArea).show_welcome(
-        workspace=str(getattr(self._runtime, '_workspace_root', '')),
-        model=getattr(self._runtime, '_model', ''),
-        approval=getattr(self._approval, 'mode', 'manual'),
-      )
+      workspace=str(getattr(self._runtime, "_workspace_root", "")),
+      model=getattr(self._runtime, "_model", ""),
+      approval=getattr(self._approval, "mode", "manual"),
+    )
     self._apply_responsive_class()
 
-  # ── Responsive layout ────────────────────────────────────────────
+  # -- Responsive layout --------------------------------------------
 
   def on_resize(self, event) -> None:
     self._apply_responsive_class()
@@ -156,7 +156,7 @@ class MainScreen(Screen):
       else:
         self.remove_class(cls)
 
-  # ── Approval bridge ──────────────────────────────────────────────
+  # -- Approval bridge ----------------------------------------------
 
   def _ask_approval_from_thread(self, req):
     """Bridge worker-thread approval request to a Textual modal dialog."""
@@ -176,7 +176,7 @@ class MainScreen(Screen):
     ready.wait(timeout=120)
     return result_holder[0] if result_holder else False
 
-  # ── Turn callbacks ───────────────────────────────────────────────
+  # -- Turn callbacks -----------------------------------------------
 
   def _build_turn_callbacks(self) -> TurnCallbacks:
     chat = self.query_one(ChatArea)
@@ -189,10 +189,10 @@ class MainScreen(Screen):
       chat.add_tool_call_start(ev.tool_name, ev.tool_call_id, ev.turn_id)
 
     def on_tool_args(ev):
-      chat.add_tool_call_args(ev.tool_call_id, ev.arguments)
+      chat.add_tool_call_args(ev.tool_call_id, ev.delta)
 
-    def on_tool_result(ev):
-      chat.add_tool_call_result(ev.tool_call_id, ev.result, ev.duration_ms)
+    def on_tool_end(ev):
+      chat.add_tool_call_result(ev.tool_call_id, ev.result, 0)
 
     def on_token_count(ev):
       status.set_token_info(ev.prompt_tokens, ev.completion_tokens, ev.total_cost)
@@ -200,25 +200,34 @@ class MainScreen(Screen):
     def on_context_usage(ev):
       status.set_context_usage(ev.used, ev.budget)
 
-    def on_turn_complete(ev):
+    def on_finished(ev):
       self._agent_step += 1
       status.set_step_count(self._agent_step)
-      if ev.model:
-        status.set_model(ev.model)
+      meta = ev.snapshot.metadata or {}
+      model = meta.get("model", "")
+      if model:
+        status.set_model(model)
+      chat.end_stream()
+
+    def on_failed(ev):
+      _log.error("Turn failed: %s", ev.message)
+      chat.add_message(f"Error: {ev.message}", "assistant")
+      chat.end_stream()
 
     return TurnCallbacks(
-      on_text_delta=on_text,
+      on_text=on_text,
       on_tool_start=on_tool_start,
-      on_tool_args_delta=on_tool_args,
-      on_tool_result=on_tool_result,
+      on_tool_args=on_tool_args,
+      on_tool_end=on_tool_end,
       on_token_count=on_token_count,
       on_context_usage=on_context_usage,
-      on_turn_complete=on_turn_complete,
+      on_finished=on_finished,
+      on_failed=on_failed,
     )
 
-  # ── Message routing ──────────────────────────────────────────────
+  # -- Message routing ----------------------------------------------
 
-  def on_input_area_submit(self, event: InputArea.Submit) -> None:
+  def on_input_area_submitted(self, event: InputArea.Submitted) -> None:
     text = event.value.strip()
     if not text:
       return
@@ -227,12 +236,30 @@ class MainScreen(Screen):
       return
     self._send_to_agent(text)
 
-  def on_input_area_slash_filter(self, event: InputArea.SlashFilter) -> None:
-    self.query_one(SlashOverlay).update_filter(event.filter_text)
+  def on_input_area_update_slash_filter(self, event: InputArea.UpdateSlashFilter) -> None:
+    self.query_one(SlashOverlay).update_filter(event.query)
 
-  def on_input_area_slash_select(self, event: InputArea.SlashSelect) -> None:
+  def on_input_area_confirm_slash(self, event: InputArea.ConfirmSlash) -> None:
     overlay = self.query_one(SlashOverlay)
     overlay.select_current()
+
+  def on_input_area_open_slash_overlay(self, event: InputArea.OpenSlashOverlay) -> None:
+    overlay = self.query_one(SlashOverlay)
+    overlay.show_overlay(event.query)
+    self.query_one(InputArea).activate_slash_overlay()
+
+  def on_input_area_dismiss_slash(self, event: InputArea.DismissSlash) -> None:
+    self._dismiss_overlay()
+
+  def on_input_area_navigate_slash(self, event: InputArea.NavigateSlash) -> None:
+    overlay = self.query_one(SlashOverlay)
+    if event.direction == "up":
+      overlay.move_up()
+    else:
+      overlay.move_down()
+
+  def on_input_area_cancel_requested(self, event: InputArea.CancelRequested) -> None:
+    self._handle_escape()
 
   def on_slash_overlay_command_selected(self, event: SlashOverlay.CommandSelected) -> None:
     self._dismiss_overlay()
@@ -258,7 +285,7 @@ class MainScreen(Screen):
     overlay.hide_overlay()
     self.query_one(InputArea).focus()
 
-  # ── Agent interaction ────────────────────────────────────────────
+  # -- Agent interaction --------------------------------------------
 
   def _send_to_agent(self, text: str) -> None:
     chat = self.query_one(ChatArea)
@@ -291,7 +318,7 @@ class MainScreen(Screen):
       input_area.focus()
       status.set_streaming_hint(False)
 
-  # ── Cancel ───────────────────────────────────────────────────────
+  # -- Cancel -------------------------------------------------------
 
   def _handle_escape(self) -> None:
     if self.query_one(SlashOverlay).visible:
@@ -309,7 +336,7 @@ class MainScreen(Screen):
       self._handle_escape()
       event.prevent_default()
 
-  # ── Session panel events ─────────────────────────────────────────
+  # -- Session panel events -----------------------------------------
 
   def on_session_panel_session_selected(self, event: SessionPanel.SessionSelected) -> None:
     self._sessions.load(event.session_id)
@@ -320,7 +347,7 @@ class MainScreen(Screen):
   def on_session_panel_refresh_sessions(self, event: SessionPanel.RefreshSessions) -> None:
     self._sessions.refresh()
 
-  # ── Custom commands ──────────────────────────────────────────────
+  # -- Custom commands ----------------------------------------------
 
   def _load_custom_commands(self) -> None:
     try:
@@ -331,7 +358,7 @@ class MainScreen(Screen):
     except Exception as exc:
       _log.error("Failed to load custom commands: %s", exc)
 
-  # ── Slash action handlers ────────────────────────────────────────
+  # -- Slash action handlers ----------------------------------------
 
   def _do_open_model_picker(self) -> None:
     async def _run() -> None:
@@ -372,7 +399,7 @@ class MainScreen(Screen):
     sidebar.display = not sidebar.display
     self.notify("Sidebar " + ("shown" if sidebar.display else "hidden"))
 
-  # ── Actions (keyboard bindings) ──────────────────────────────────
+  # -- Actions (keyboard bindings) ----------------------------------
 
   def action_new_session(self) -> None:
     self._agent_step = 0
@@ -407,7 +434,7 @@ class MainScreen(Screen):
   def action_quit(self) -> None:
     self.app.exit()
 
-  # ── Controller callbacks ─────────────────────────────────────────
+  # -- Controller callbacks -----------------------------------------
 
   def _on_sessions_updated(self, infos: list | None = None) -> None:
     sessions = infos if infos is not None else self._sessions.list_sessions()

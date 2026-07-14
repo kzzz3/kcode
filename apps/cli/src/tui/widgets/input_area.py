@@ -1,4 +1,4 @@
-"""User input area -- Enter submits, / triggers inline slash-command overlay.
+﻿"""User input area -- Enter submits, / triggers inline slash-command overlay.
 
 Design notes:
 
@@ -10,6 +10,8 @@ Design notes:
   - Ctrl+Enter submits in multi-line mode as alternative to Enter
   - Real-time filter updates as user types after '/'
   - Focus restoration after overlay / dialog dismiss
+  - Ctrl+Up/Down for input history navigation
+  - show_thinking() / show_send() for streaming state UI feedback
 """
 
 from __future__ import annotations
@@ -33,6 +35,7 @@ class InputArea(TextArea):
     * Ctrl+Enter also submits (useful in multi-line mode).
     * Shift+Enter inserts a newline.
     * Escape cancels streaming when overlay is not open.
+    * Ctrl+Up/Down navigates input history.
   """
 
   DEFAULT_CSS = """
@@ -40,12 +43,12 @@ class InputArea(TextArea):
     height: auto;
     min-height: 3;
     max-height: 40%;
-    border: solid $primary;
+    border: solid #8b929c;
     padding: 0 1;
   }
 
   InputArea:focus-within {
-    border: tall $primary;
+    border: tall #39c5cf;
   }
 
   .input-placeholder {
@@ -63,6 +66,19 @@ class InputArea(TextArea):
 
   # -- Messages --
 
+  class Submitted(Message):
+    """User pressed Enter (overlay closed) to submit their message."""
+    def __init__(self, value: str) -> None:
+      self.value = value
+      super().__init__()
+
+  # Aliases so MainScreen event handlers (on_input_area_submit, etc.) work
+  Submit = Submitted
+
+  class CancelRequested(Message):
+    """User pressed Escape to cancel active streaming."""
+    pass
+
   class OpenSlashOverlay(Message):
     """Request to show the inline slash-command overlay."""
     def __init__(self, query: str) -> None:
@@ -75,6 +91,9 @@ class InputArea(TextArea):
       self.query = query
       super().__init__()
 
+  # Aliases for MainScreen event routing
+  SlashFilter = UpdateSlashFilter
+
   class NavigateSlash(Message):
     """Navigate the overlay up or down."""
     def __init__(self, direction: str) -> None:
@@ -85,18 +104,11 @@ class InputArea(TextArea):
     """User confirmed a slash command (Tab or Enter while overlay open)."""
     pass
 
+  # Alias for MainScreen event routing
+  SlashSelect = ConfirmSlash
+
   class DismissSlash(Message):
     """User wants to dismiss the slash overlay."""
-    pass
-
-  class Submitted(Message):
-    """User pressed Enter (overlay closed) to submit their message."""
-    def __init__(self, value: str) -> None:
-      self.value = value
-      super().__init__()
-
-  class CancelRequested(Message):
-    """User pressed Escape to cancel active streaming."""
     pass
 
   # -- State --
@@ -105,6 +117,9 @@ class InputArea(TextArea):
     super().__init__(**kwargs)
     self._slash_active: bool = False
     self._palette_mode: bool = False  # True when opened via Ctrl+K
+    self._input_history: list[str] = []
+    self._history_index: int = -1
+    self._pre_history_text: str = ""
 
   # -- Compose (placeholder overlay) --
 
@@ -114,6 +129,56 @@ class InputArea(TextArea):
 
   def on_mount(self) -> None:
     """Show/hide placeholder based on initial content."""
+    self._update_placeholder()
+
+  # -- Input history --
+
+  def push_history(self, text: str) -> None:
+    """Add a submitted message to the input history."""
+    if text and (not self._input_history or self._input_history[-1] != text):
+      self._input_history.append(text)
+      # Keep history bounded
+      if len(self._input_history) > 100:
+        self._input_history = self._input_history[-100:]
+    self._history_index = -1
+    self._pre_history_text = ""
+
+  def _navigate_history(self, direction: int) -> None:
+    """Navigate up (-1) or down (+1) through input history."""
+    if not self._input_history:
+      return
+
+    if self._history_index == -1:
+      # Save current text before navigating
+      self._pre_history_text = self.text
+
+    new_idx = self._history_index + direction
+    if new_idx < -1:
+      new_idx = -1
+    if new_idx >= len(self._input_history):
+      new_idx = len(self._input_history) - 1
+
+    self._history_index = new_idx
+
+    if new_idx == -1:
+      self.text = self._pre_history_text
+    else:
+      self.text = self._input_history[len(self._input_history) - 1 - new_idx]
+
+  # -- Streaming state feedback --
+
+  def show_thinking(self) -> None:
+    """Visual feedback: agent is thinking. Disable input temporarily."""
+    self.disabled = True
+    ph = self.query_one(".input-placeholder", Static)
+    ph.update("  Agent is thinking...")
+    ph.display = True
+
+  def show_send(self) -> None:
+    """Restore input to send-ready state."""
+    self.disabled = False
+    ph = self.query_one(".input-placeholder", Static)
+    ph.update(self.PLACEHOLDER)
     self._update_placeholder()
 
   # -- Change tracking for live filter + placeholder --
@@ -172,6 +237,16 @@ class InputArea(TextArea):
         self.post_message(self.OpenSlashOverlay(""))
       return
 
+    # --- Ctrl+Up/Down: input history navigation ---
+    if key == "ctrl+up":
+      event.prevent_default()
+      self._navigate_history(-1)
+      return
+    if key == "ctrl+down":
+      event.prevent_default()
+      self._navigate_history(1)
+      return
+
     # --- Slash overlay navigation ---
     if self._slash_active:
       if key == "up":
@@ -213,6 +288,7 @@ class InputArea(TextArea):
       event.prevent_default()
       text = self.text.strip()
       if text:
+        self.push_history(text)
         self.post_message(self.Submitted(text))
         self.clear()
       return

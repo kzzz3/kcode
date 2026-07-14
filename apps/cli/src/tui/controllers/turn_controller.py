@@ -18,7 +18,7 @@ from apps.cli.src.core.agent_runtime import CliAgentRuntime
 _log = logging.getLogger(__name__)
 
 
-# ── UI event types ──────────────────────────────────────────────────
+# -- UI event types ------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -56,6 +56,23 @@ class TurnToolEnd:
 
 
 @dataclass(frozen=True)
+class TurnTokenCount:
+  """Token usage reported after a turn completes."""
+  turn_id: int
+  prompt_tokens: int
+  completion_tokens: int
+  total_cost: float
+
+
+@dataclass(frozen=True)
+class TurnContextUsage:
+  """Context window utilization after a turn."""
+  turn_id: int
+  used: int
+  budget: int
+
+
+@dataclass(frozen=True)
 class TurnFinished:
   """The agent turn completed successfully."""
   turn_id: int
@@ -69,10 +86,13 @@ class TurnFailed:
   message: str
 
 
-TurnEvent = TurnText | TurnToolStart | TurnToolArgs | TurnToolEnd | TurnFinished | TurnFailed
+TurnEvent = (
+  TurnText | TurnToolStart | TurnToolArgs | TurnToolEnd
+  | TurnTokenCount | TurnContextUsage | TurnFinished | TurnFailed
+)
 
 
-# ── Callbacks ───────────────────────────────────────────────────────
+# -- Callbacks -----------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -86,11 +106,13 @@ class TurnCallbacks:
   on_tool_start: Callable[[TurnToolStart], None]
   on_tool_args: Callable[[TurnToolArgs], None]
   on_tool_end: Callable[[TurnToolEnd], None]
+  on_token_count: Callable[[TurnTokenCount], None]
+  on_context_usage: Callable[[TurnContextUsage], None]
   on_finished: Callable[[TurnFinished], None]
   on_failed: Callable[[TurnFailed], None]
 
 
-# ── Controller ──────────────────────────────────────────────────────
+# -- Controller ----------------------------------------------------
 
 
 class TurnController:
@@ -208,6 +230,28 @@ class TurnController:
             ))
 
         elif isinstance(item, AgentSnapshot):
+          # Extract token/cost/context from snapshot metadata before finishing
+          meta = item.metadata or {}
+          prompt_tok = meta.get("prompt_tokens", 0)
+          compl_tok = meta.get("completion_tokens", 0)
+          total_cost = meta.get("total_cost", 0.0)
+          if prompt_tok or compl_tok or total_cost:
+            cb.on_token_count(TurnTokenCount(
+              turn_id=turn_id,
+              prompt_tokens=prompt_tok,
+              completion_tokens=compl_tok,
+              total_cost=total_cost,
+            ))
+
+          ctx_used = meta.get("context_used", 0)
+          ctx_budget = meta.get("context_budget", 0)
+          if ctx_used or ctx_budget:
+            cb.on_context_usage(TurnContextUsage(
+              turn_id=turn_id,
+              used=ctx_used,
+              budget=ctx_budget,
+            ))
+
           cb.on_finished(TurnFinished(turn_id=turn_id, snapshot=item))
 
     except Exception as exc:

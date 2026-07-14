@@ -1,4 +1,7 @@
-"""Session management panel — list, create, select sessions."""
+﻿"""Session management panel -- list, create, select sessions.
+
+Also serves as Activity Rail with current session marker support.
+"""
 from __future__ import annotations
 
 from textual.widgets import ListView, ListItem, Label, Button, Static
@@ -13,7 +16,7 @@ class SessionPanel(Vertical):
   SessionPanel {
     width: 30;
     min-width: 20;
-    border: solid $primary;
+    border: solid #8b929c;
     padding: 0 1;
   }
 
@@ -56,6 +59,7 @@ class SessionPanel(Vertical):
   def __init__(self, **kwargs) -> None:
     super().__init__(**kwargs)
     self._sessions: list[tuple[str, str]] = []  # (id, title)
+    self._current_session_id: str | None = None
 
   def compose(self):
     yield Static("Sessions", classes="panel-title")
@@ -70,9 +74,17 @@ class SessionPanel(Vertical):
     self._sessions = sessions
     self._rebuild_list()
 
+  # Alias so MainScreen._on_sessions_updated works
+  refresh_list = set_sessions
+
   def add_session(self, session_id: str, title: str) -> None:
     """Add a session to the top of the list."""
     self._sessions.insert(0, (session_id, title))
+    self._rebuild_list()
+
+  def set_current_session(self, session_id: str | None) -> None:
+    """Mark a session as the current active one (shows marker)."""
+    self._current_session_id = session_id
     self._rebuild_list()
 
   def _rebuild_list(self) -> None:
@@ -88,7 +100,8 @@ class SessionPanel(Vertical):
       pass
     for sid, title in self._sessions:
       short_id = sid[:8]
-      label = f"{short_id} | {title}" if title else short_id
+      marker = "● " if sid == self._current_session_id else ""
+      label = f"{marker}{short_id} | {title}" if title else f"{marker}{short_id}"
       list_view.append(ListItem(Label(label)))
 
   def on_resize(self, event) -> None:
@@ -112,4 +125,3 @@ class SessionPanel(Vertical):
       self.post_message(self.NewSession())
     elif event.button.id == "btn-refresh":
       self.post_message(self.RefreshSessions())
-
