@@ -22,6 +22,7 @@ from ..widgets.slash_overlay import SlashOverlay
 from ..utils.custom_commands import load_user_commands, load_project_commands
 from ..widgets.approval_dialog import ApprovalDialog
 from ..controllers.approval_controller import ApprovalController
+from ..controllers.session_controller import SessionController
 from .model_picker import ModelPicker
 from .help_screen import HelpScreen
 
@@ -69,6 +70,13 @@ class MainScreen(Screen):
     mode_str = runtime._config.approval_mode if isinstance(runtime._config.approval_mode, str) else runtime._config.approval_mode.value
     self._approval = ApprovalController(mode=mode_str)  # type: ignore[arg-type]
 
+    self._sessions = SessionController(
+      runtime,
+      on_sessions_changed=self._on_sessions_updated,
+      on_session_loaded=self._on_session_loaded,
+      on_error=lambda msg: self.notify(msg, severity="error"),
+    )
+
   def compose(self) -> ComposeResult:
     yield Header()
     with Horizontal(id="main-container"):
@@ -90,7 +98,7 @@ class MainScreen(Screen):
       state="IDLE",
       approval_mode=self._approval.mode,
     )
-    self._refresh_sessions()
+    self._sessions.refresh()
     self._load_custom_commands()
 
     # Wire approval callback into the runtime (P0 #3)
@@ -333,14 +341,14 @@ class MainScreen(Screen):
       self._agent_step = 0
       status = self.query_one(StatusBar)
       status.set_step_count(0)
-      self._refresh_sessions()
+      self._sessions.refresh()
       self.notify("New session created")
     except Exception as exc:
       _log.error("Failed to create session: %s", exc)
       self.notify(f"Failed to create session: {exc}", severity="error")
 
   def on_session_panel_refresh_sessions(self, event: SessionPanel.RefreshSessions) -> None:
-    self._refresh_sessions()
+    self._sessions.refresh()
 
   def _refresh_sessions(self) -> None:
     try:
@@ -453,7 +461,7 @@ class MainScreen(Screen):
     sidebar = self.query_one("#sidebar")
     if not sidebar.display:
       sidebar.display = True
-    self._refresh_sessions()
+    self._sessions.refresh()
     self.notify("Sessions refreshed")
 
   def _run_doctor(self) -> None:
@@ -475,7 +483,9 @@ class MainScreen(Screen):
 
   def action_new_session(self) -> None:
     self._agent_step = 0
-    self.on_session_panel_new_session(SessionPanel.NewSession())
+    status = self.query_one(StatusBar)
+    status.set_step_count(0)
+    self._sessions.create_new()
 
   def action_toggle_sidebar(self) -> None:
     self._toggle_sidebar()
