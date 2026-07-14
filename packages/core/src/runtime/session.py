@@ -163,8 +163,18 @@ class SessionStore:
       return None
     return SessionRecord(id=row[0], title=row[1], workspace_root=row[2], created_at=row[3], updated_at=row[4], metadata=_loads(row[5]) or {})
 
-  def list_sessions(self, limit: int = 50) -> list[SessionRecord]:
-    rows = self._conn.execute("SELECT id, title, workspace_root, created_at, updated_at, metadata FROM sessions ORDER BY updated_at DESC, created_at DESC LIMIT ?", (limit,)).fetchall()
+  def list_sessions(self, limit: int = 50, *, workspace_root: Path | None = None) -> list[SessionRecord]:
+    """List recent sessions, optionally filtered by workspace root."""
+    if workspace_root is not None:
+      rows = self._conn.execute(
+        "SELECT id, title, workspace_root, created_at, updated_at, metadata FROM sessions WHERE workspace_root=? ORDER BY updated_at DESC, created_at DESC LIMIT ?",
+        (str(workspace_root), limit),
+      ).fetchall()
+    else:
+      rows = self._conn.execute(
+        "SELECT id, title, workspace_root, created_at, updated_at, metadata FROM sessions ORDER BY updated_at DESC, created_at DESC LIMIT ?",
+        (limit,),
+      ).fetchall()
     return [SessionRecord(id=r[0], title=r[1], workspace_root=r[2], created_at=r[3], updated_at=r[4], metadata=_loads(r[5]) or {}) for r in rows]
 
   def append_message(self, session_id: str, role: str, content: str | None, *, tool_calls: list[dict[str, Any]] | None = None, tool_call_id: str | None = None, metadata: dict[str, Any] | None = None) -> MessageRecord:

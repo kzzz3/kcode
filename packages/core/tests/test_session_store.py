@@ -83,3 +83,42 @@ def test_get_tool_runs_orders_by_start_time(tmp_path: Path) -> None:
     runs = store.get_tool_runs(session.id)
     assert [r.tool_name for r in runs] == ["alpha", "beta"]
     assert [r.status for r in runs] == ["completed", "failed"]
+
+def test_list_sessions_filters_workspace(tmp_path: Path) -> None:
+  store = SessionStore(tmp_path / "ws_filter.sqlite")
+  ws_a = tmp_path / "a"
+  ws_b = tmp_path / "b"
+  ws_a.mkdir()
+  ws_b.mkdir()
+
+  store.create_session(workspace_root=ws_a, title="session-a")
+  store.create_session(workspace_root=ws_b, title="session-b")
+  store.create_session(workspace_root=ws_a, title="session-a-2")
+
+  all_sessions = store.list_sessions()
+  assert len(all_sessions) == 3
+
+  a_sessions = store.list_sessions(workspace_root=ws_a)
+  assert len(a_sessions) == 2
+  assert all(s.workspace_root == str(ws_a) for s in a_sessions)
+
+  b_sessions = store.list_sessions(workspace_root=ws_b)
+  assert len(b_sessions) == 1
+  assert b_sessions[0].title == "session-b"
+
+
+def test_get_message_counts(tmp_path: Path) -> None:
+  store = SessionStore(tmp_path / "counts.sqlite")
+  s1 = store.create_session(workspace_root=tmp_path)
+  s2 = store.create_session(workspace_root=tmp_path)
+
+  store.append_message(s1.id, "user", "hello")
+  store.append_message(s1.id, "assistant", "hi")
+  store.append_message(s2.id, "user", "yo")
+
+  counts = store.get_message_counts([s1.id, s2.id])
+  assert counts[s1.id] == 2
+  assert counts[s2.id] == 1
+
+  empty_counts = store.get_message_counts([])
+  assert empty_counts == {}
